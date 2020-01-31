@@ -43,7 +43,8 @@ def run_prodigal(input_file):
 # --- Run hmmsearch ---
 def run_hmmsearch(input_file):
     """
-    Runs hmmsearch on the set of SCGs
+    Runs hmmsearch on the set of SCGs and select the
+    best Archaea or Bacterial model
     
     Arguments:
         input_file -- Path to protein FastA file
@@ -51,23 +52,56 @@ def run_hmmsearch(input_file):
     Returns:
         output -- Path to hmmsearch hits table
     """
-    import subprocess
-    from pathlib import Path
 
     file_path = Path(InputFile)
     folder = file_path.parent
     name = Path(file_path.name)
-    output_bacteria = folder / name.with_suffix('_bacteria.hmm')
-    output_archaea = folder / name.with_suffix('_archaea.hmm')
-    temp_output_bacteria = folder / name.with_suffix('_bacteria.temp')
-    temp_output_archaea = folder / name.with_suffix('_archaea.temp')
+    output_bacteria = folder / name.with_suffix('.bacteria.hmm')
+    output_archaea = folder / name.with_suffix('.archaea.hmm')
+    temp_output_bacteria = folder / name.with_suffix('.bacteria.temp')
+    temp_output_archaea = folder / name.with_suffix('.archaea.temp')
     script_path = Path(__file__)
     script_dir = script_path.parent
-    HMM_bacteria_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
-    HMM_bacteria_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
-    subprocess.call(["hmmsearch", "--tblout", str(Output), "-o", str(Temp_Output), "--cut_ga", "--cpu", "1", str(HMM_bacteria_model), str(file_path)])
-    Temp_Output.unlink()
-    return Output
+    HMM_bacteria_model = script_dir / "00.Libraries/01.SCG_HMMs/Bacteria_SCG.hmm"
+    HMM_archaea_model = script_dir / "00.Libraries/01.SCG_HMMs/Archaea_SCG.hmm"
+    HMM_complete_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_CSG_DB.hmm"
+    subprocess.call(["hmmsearch", "--tblout", str(output_bacteria), "-o", str(temp_output_bacteria), "--cut_ga", "--cpu", "1",
+                    str(HMM_bacteria_model), str(file_path)])
+    subprocess.call(["hmmsearch", "--tblout", str(output_archaea), "-o", str(temp_output_archaea), "--cut_ga", "--cpu", "1",
+                    str(HMM_bacteria_model), str(file_path)])
+    temp_output_bacteria.unlink()
+    temp_output_archaea.unlink()
+
+    counter_bacteria = 0
+    counter_archaea = 0
+    with open(output_bacteria) as hmm_bac:
+        for line in hmm_bac:
+            if line.startswith("#"):
+                continue
+            else:
+                counter_bacteria += 1
+    with open(output_archaea) as hmm_arc:
+        for line in hmm_arc:
+            if line.startswith("#"):
+                continue
+            else:
+                counter_archaea += 1
+    if counter_bacteria > counter_archaea:
+        output_archaea.unlink()
+        output = output_bacteria
+    elif counter_bacteria < counter_archaea:
+        output_bacteria.unlink()
+        output = output_archaea
+    else:
+        print("Not sure which model to use. Default to complete dataset")
+        output_archaea.unlink()
+        output_bacteria.unlink()
+        output_complete = folder / name.with_suffix('.complete.hmm')
+        temp_output_complete = folder / name.with_suffix('.complete.temp')
+        subprocess.call(["hmmsearch", "--tblout", str(output_complete), "-o", str(temp_output_complete), "--cut_ga", "--cpu", "1",
+                    str(HMM_complete_model), str(file_path)])
+        output = output_complete
+    return output
 
 # --- Find Kmers from HMM results ---
 def Kmer_Parser(SCG_HMM_file, Keep):
