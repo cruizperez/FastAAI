@@ -14,34 +14,58 @@ or Diamond) and the hAAI implemented in MiGA.
 """
 
 ################################################################################
+"""---0.0 Import Modules---"""
+import subprocess
+from pathlib import Path
+
+################################################################################
 """---1.0 Define Functions---"""
 # --- Run prodigal ---
-def run_prodigal(InputFile):
-    import subprocess
-    from pathlib import Path
+def run_prodigal(input_file):
+    """
+    Runs prodigal and stores faa files
 
-    FilePath = Path(InputFile)
-    Prefix = Path(FilePath.stem)
-    Folder = FilePath.parent
-    Output = Folder / Prefix.with_suffix('.faa')
-    Temp_Output = Folder / Prefix.with_suffix('.temp')
-    subprocess.call(["prodigal", "-i", str(FilePath), "-a", str(Output), "-p", "meta", "-q", "-o", str(Temp_Output)])
-    Temp_Output.unlink()
-    return Output
+    Arguments:
+       input_file -- Path to genome FastA file
+    
+    Returns:
+        output -- Path to amino acid fasta result
+    """
+    file_path = Path(input_file)
+    prefix = Path(file_path.stem)
+    folder = file_path.parent
+    output = folder / prefix.with_suffix('.faa')
+    temp_output = folder / prefix.with_suffix('.temp')
+    subprocess.call(["prodigal", "-i", str(file_path), "-a", str(output), "-p", "meta", "-q", "-o", str(temp_output)])
+    temp_output.unlink()
+    return output
 
 # --- Run hmmsearch ---
-def run_hmmsearch(InputFile):
+def run_hmmsearch(input_file):
+    """
+    Runs hmmsearch on the set of SCGs
+    
+    Arguments:
+        input_file -- Path to protein FastA file
+    
+    Returns:
+        output -- Path to hmmsearch hits table
+    """
     import subprocess
     from pathlib import Path
-## TODO Fix path usage (urgent)
-    FilePath = Path(InputFile)
-    Folder = FilePath.parent
-    Output = Folder / FilePath.with_suffix('.hmm')
-    Temp_Output = Folder / FilePath.with_suffix('.temp')
-    Script_path = Path(__file__)
-    Script_dir = Script_path.parent
-    HMM_Model = Script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
-    subprocess.call(["hmmsearch", "--tblout", str(Output), "-o", str(Temp_Output), "--cut_ga", "--cpu", "1", str(HMM_Model), str(FilePath)])
+
+    file_path = Path(InputFile)
+    folder = file_path.parent
+    name = Path(file_path.name)
+    output_bacteria = folder / name.with_suffix('_bacteria.hmm')
+    output_archaea = folder / name.with_suffix('_archaea.hmm')
+    temp_output_bacteria = folder / name.with_suffix('_bacteria.temp')
+    temp_output_archaea = folder / name.with_suffix('_archaea.temp')
+    script_path = Path(__file__)
+    script_dir = script_path.parent
+    HMM_bacteria_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
+    HMM_bacteria_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
+    subprocess.call(["hmmsearch", "--tblout", str(Output), "-o", str(Temp_Output), "--cut_ga", "--cpu", "1", str(HMM_bacteria_model), str(file_path)])
     Temp_Output.unlink()
     return Output
 
