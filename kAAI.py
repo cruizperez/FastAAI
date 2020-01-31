@@ -53,7 +53,7 @@ def run_hmmsearch(input_file):
         output -- Path to hmmsearch hits table
     """
 
-    file_path = Path(InputFile)
+    file_path = Path(input_file)
     folder = file_path.parent
     name = Path(file_path.name)
     output_bacteria = folder / name.with_suffix('.bacteria.hmm')
