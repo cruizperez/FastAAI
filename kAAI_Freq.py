@@ -135,6 +135,8 @@ def Kmer_Filter(Kmer_Dictionary, Output):
     from scipy.stats import invgauss
     import pandas as pd
     plt.rcParams['pdf.fonttype'] = 42
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = 'Century Gothic'
     plt.rcParams.update({'font.size': 25})
 
     Total_Kmers = []
@@ -149,17 +151,21 @@ def Kmer_Filter(Kmer_Dictionary, Output):
     X_values = np.linspace(Freqs.min(), Freqs.max(), 500)
     Y_Predicted = invgauss.pdf(X_values, mu, loc, scale)
     Std = invgauss.var(mu, loc, scale)**0.5
+    Mean = invgauss.mean(mu, loc, scale)
     Figure, Axis = plt.subplots(1,1,figsize=(10,10),dpi=300,constrained_layout=True)
     Axis.hist(Freqs, bins=50, density=True, color="#4E8983", label="Kmer Frequencies")
     Axis.plot(X_values, Y_Predicted, linewidth=2, color="#217B55", label="InvGamma Distribuion")
-    Axis.axvline(x=Std, linewidth=2, color='#960D41', label="Kmer Frequency Cutoff")
+    Axis.axvline(x=Mean, linewidth=2, color='#960D41', label="Kmer Frequency Cutoff")
     Axis.legend(loc="best")
     Axis.set_xlabel("Number of occurrences in dataset")
     Axis.set_ylabel("Frequency")
     Figure.savefig(Output + "_plot.png")
     Low_Abundance_Kmers = []
+    print(Mean, Std)
     for key, value in Total_Frequency_Count.items():
-        if value >= Std and value <= Std*1.5:
+        #if value >= (int(Mean) + int(Std)*2):
+        # TESTING PURPOSES
+        if ((value >= (int(Mean) + int(Std)*2)) and (value <= (int(Mean) + int(Std)*3))):
             Low_Abundance_Kmers.append(key)
     Low_Abundance_Kmers.sort()
     
@@ -204,7 +210,8 @@ def Distance_Calculator(Kmer_Freqs, Genomes):
     """
     from skbio.diversity import beta_diversity
 
-    BC_Distances = beta_diversity("euclidean", Kmer_Freqs, Genomes)
+    BC_Distances = beta_diversity("braycurtis", Kmer_Freqs, Genomes)
+#    BC_Distances = beta_diversity("euclidean", Kmer_Freqs, Genomes)
     BC_Dataframe = BC_Distances.to_data_frame()
     BC_Dataframe = 1-BC_Dataframe
     
@@ -345,12 +352,11 @@ def main():
 
     print("Calculating distances...")
     print(datetime.datetime.now())
-    #! Remove after testing
     print(Array_Kmers)
     BC_Distances = Distance_Calculator(Array_Kmers, Genomes)
-    BC_Distances.to_csv(Output + "_dist.tab", sep="\t", header=True, index=True)
+    BC_Distances.to_csv(Output + "_dist.mat", sep="\t", header=True, index=True)
 
-    with open(Output + "_dist.list", 'w') as Outfile:
+    with open(Output + "_dist.tab", 'w') as Outfile:
         for i in BC_Distances.columns:
             for j in BC_Distances.columns:
                 Outfile.write("{}\t{}\t{}\n".format(i, j, BC_Distances.loc[i,j]))
