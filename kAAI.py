@@ -60,34 +60,68 @@ def run_hmmsearch(input_file):
     temp_output = folder / name.with_suffix('.temp')
     script_path = Path(__file__)
     script_dir = script_path.parent
-    HMM_complete_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_CSG_DB.hmm"
+    HMM_complete_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
     subprocess.call(["hmmsearch", "--tblout", str(output), "-o", str(temp_output), "--cut_ga", "--cpu", "1",
                     str(HMM_complete_model), str(file_path)])
     temp_output.unlink()
     return output
 
 # --- Find Kmers from HMM results ---
-def Kmer_Parser(SCG_HMM_file, Keep):
-    from pathlib import Path
-
-    Kmer_Dic = {}
-    HMM_Path = Path(SCG_HMM_file)
-    Name = HMM_Path.name
-    Folder = HMM_Path.parent
-    Protein_File = Folder / HMM_Path.with_suffix('.faa')
-    Positive_Matches = []
-    with open(HMM_Path, 'r') as HMM_Input:
+def Kmer_Parser(SCG_HMM_file, keep):
+    """[summary]
+    
+    Arguments:
+        SCG_HMM_file {[type]} -- [description]
+        keep {[type]} -- [description]
+    
+    Returns:
+        [type] -- [description]
+    """
+    HMM_path = Path(SCG_HMM_file)
+    name = HMM_path.name
+    genome = HMM_path.stem
+    folder = HMM_path.parent
+    protein_file = folder / Path(name).with_suffix('.faa')
+    kmer_dic = {}
+    positive_matches = {}
+    positive_proteins = []
+    with open(HMM_path, 'r') as HMM_Input:
         for line in HMM_Input:
-            if line.startswith("#"):
+            if line[0].startswith("#"):
                 continue
             else:
-                Positive_Matches.append(line.strip().split()[0])
-    if Keep == False:
+                line = line.strip().split()
+                protein_name = line[0]
+                model_name = line[3]
+                score = line[8]
+                if model_name in positive_matches:
+                    if score > positive_matches[model_name][1]:
+                        positive_matches[model_name] = [protein_name, score]
+                    else:
+                        continue
+                else:
+                    positive_matches[model_name] = [protein_name, score]
+    if keep == False:
         HMM_Path.unlink()
-    kmers = read_kmers_from_file(Protein_File, Positive_Matches, 4)
-    Kmer_Dic[Name] = set(kmers)
+    for proteins in positive_matches.values():
+        positive_proteins.append(proteins[0])
+    scg_kmers = read_kmers_from_file(protein_file, positive_proteins, 4)
+    for accession, protein in positive_matches.items():
+        scg_kmers[accession] = scg_kmers.pop(protein[0])
+    genome_kmers = {genome : scg_kmers}
+    return genome_kmers
 
-    return Kmer_Dic
+# --- Read Kmers from SCGs ---
+def read_kmers_from_file(filename, positive_hits, ksize):
+    from Bio.SeqIO.FastaIO import SimpleFastaParser
+    scg_kmers = {}
+    with open(filename) as Fasta_in:
+        for title, sequence in SimpleFastaParser(Fasta_in):
+            protein = title.split()[0]
+            if protein in positive_hits:
+                kmers = build_kmers(sequence, ksize)
+                scg_kmers[protein] = kmers
+    return scg_kmers
 
 # --- Build Kmers ---
 def build_kmers(sequence, ksize):
@@ -97,19 +131,8 @@ def build_kmers(sequence, ksize):
     for i in range(n_kmers):
         kmer = sequence[i:i + ksize]
         kmers.append(kmer)
-
-    return kmers
-
-# --- Read Kmers from SCGs ---
-def read_kmers_from_file(filename, positive_hits, ksize):
-    from Bio.SeqIO.FastaIO import SimpleFastaParser
-    all_kmers = []
-    with open(filename) as Fasta_in:
-        for title, sequence in SimpleFastaParser(Fasta_in):
-            if title.split()[0] in positive_hits:
-                kmers = build_kmers(sequence, ksize)
-                all_kmers += kmers
-    return all_kmers
+        kmers_set = set(kmers)
+    return kmers_set
 
 # --- Read Kmers from files ---
 def read_total_kmers_from_file(filename, positive_hits, ksize):
@@ -122,24 +145,40 @@ def read_total_kmers_from_file(filename, positive_hits, ksize):
     return all_kmers
 
 # --- Parse kAAI ---
-def kAAI_Parser(ID):
-    from pathlib import Path
+def kAAI_Parser(query_id):
 
-    FilePath = Path(ID)
-    Folder = Path.cwd()
-    Output = Folder / FilePath.with_suffix('.aai.temp')
-    with open(Output, 'w') as OutFile:
-        for key2, value2 in Kmer_Dictionary.items():
-            intersection = len(Kmer_Dictionary[ID].intersection(value2))
-            shorter = min(len(list(Kmer_Dictionary[ID])), len(list(value2)))
-            fraction = round(intersection/shorter, 3)
-            OutFile.write("{}\t{}\t{}\t{}\t{}\n".format(ID, key2, intersection, shorter, fraction))
-    return Output
+    file_path = Path(query_id)
+    running_folder = Path.cwd()
+    temp_output = running_folder / file_path.with_suffix('.aai.temp')
+    query_num_scg = len(total_kmer_dictionary[query_id])
+    query_scg_list = total_kmer_dictionary[query_id].keys()
+    with open(temp_output, 'w') as out_file:
+        for target_genome, scg_ids in total_kmer_dictionary.items():
+            jaccard_similarities = []
+            target_num_scg = len(scg_ids)
+            target_scg_list = scg_ids.keys()
+            if query_num_scg > target_num_scg:
+                final_scg_list = target_scg_list
+            else:
+                final_scg_list = query_scg_list
+            for accession in final_scg_list:
+                if accession in query_scg_list and accession in target_scg_list:
+                    kmers_query = total_kmer_dictionary[query_id][accession]
+                    kmers_target = total_kmer_dictionary[target_genome][accession]
+                    intersection = len(kmers_query.intersection(kmers_target))
+                    union = len(kmers_query.union(kmers_target))
+                    jaccard_similarities.append(intersection / union)
+                else:
+                    continue
+            out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                           sum(jaccard_similarities)/len(jaccard_similarities),
+                           len(jaccard_similarities), len(final_scg_list)))
+    return temp_output
 
 # --- Initialize function ---
 def child_initialize(_dictionary):
-     global Kmer_Dictionary
-     Kmer_Dictionary = _dictionary
+     global total_kmer_dictionary
+     total_kmer_dictionary = _dictionary
 
 def merge_dicts(Dictionaries):
     """
@@ -178,7 +217,7 @@ def main():
     parser.add_argument('-s', '--scg_hmm', dest='HMM_Files', action='store', nargs='+', required=False, help='List of hmm search results')
     parser.add_argument('-o', '--output', dest='Output', action='store', required=True, help='Output File')
     parser.add_argument('-t', '--threads', dest='Threads', action='store', default=1, type=int, required=False, help='Number of threads to use, by default 1')
-    parser.add_argument('-k', '--keep', dest='Keep', action='store_false', required=False, help='Keep intermediate files, by default true')
+    parser.add_argument('-k', '--keep', dest='keep', action='store_false', required=False, help='Keep intermediate files, by default true')
     args = parser.parse_args()
 
     Genome_List = args.Genome_List
@@ -186,7 +225,7 @@ def main():
     HMM_Files = args.HMM_Files
     Output = args.Output
     Threads = args.Threads
-    Keep = args.Keep
+    keep = args.keep
 
     # Predict proteins and perform HMM searches
     print("kAAI started on {}".format(datetime.datetime.now())) # Remove after testing
@@ -235,12 +274,12 @@ def main():
     print(datetime.datetime.now()) # Remove after testing
     try:
         pool = multiprocessing.Pool(Threads)
-        Kmer_Results = pool.map(partial(Kmer_Parser, Keep=Keep), HMM_Search_Files)
+        Kmer_Results = pool.map(partial(Kmer_Parser, keep=keep), HMM_Search_Files)
     finally:
         pool.close()
         pool.join()
-
     Final_Kmer_Dict = merge_dicts(Kmer_Results)
+    print(len(Final_Kmer_Dict))
 
     # Calculate shared Kmer fraction
     print("Calculating shared Kmer fraction...")
@@ -253,7 +292,7 @@ def main():
         pool.close()
         pool.join()
 
-     # Merge results into a single output
+    # Merge results into a single output
     print(datetime.datetime.now()) # Remove after testing
     with open(Output, 'w') as OutFile:
         for file in Fraction_Results:
