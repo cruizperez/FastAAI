@@ -17,6 +17,7 @@ or Diamond) and the hAAI implemented in MiGA.
 """---0.0 Import Modules---"""
 import subprocess
 from pathlib import Path
+import numpy as np
 
 ################################################################################
 """---1.0 Define Functions---"""
@@ -66,6 +67,41 @@ def run_hmmsearch(input_file):
     temp_output.unlink()
     return output
 
+# --- Filter HMM results for best matches ---
+def HMM_filter(SCG_HMM_file, keep):
+    HMM_path = Path(SCG_HMM_file)
+    name = HMM_path.name
+    genome = HMM_path.stem
+    folder = HMM_path.parent
+    outfile = folder / Path(name).with_suffix('.filt')
+    HMM_hit_dict = {}
+    with open(SCG_HMM_file, 'r') as hit_file:
+        for line in hit_file:
+            if line.startswith("#"):
+                continue
+            else:
+                hit = line.strip().split()
+                protein_name = hit[0]
+                score = hit[8]
+                if protein_name in HMM_hit_dict:
+                    if score > HMM_hit_dict[protein_name][0]:
+                        HMM_hit_dict[protein_name] = [score, line]
+                    elif score < HMM_hit_dict[protein_name][0]:
+                        continue
+                    else:
+                        if np.random.randint(2) > 0:
+                            HMM_hit_dict[protein_name] = [score, line]
+                else:
+                    HMM_hit_dict[protein_name] = [score, line]
+    with open(outfile, 'w') as output:
+        for hits in HMM_hit_dict.values():
+            output.write("{}".format(hits[1]))
+    if keep == False:
+        HMM_Path.unlink()
+    return outfile
+
+
+
 # --- Find Kmers from HMM results ---
 def Kmer_Parser(SCG_HMM_file, keep):
     """[summary]
@@ -87,28 +123,24 @@ def Kmer_Parser(SCG_HMM_file, keep):
     positive_proteins = []
     with open(HMM_path, 'r') as HMM_Input:
         for line in HMM_Input:
-            if line[0].startswith("#"):
-                continue
-            else:
-                line = line.strip().split()
-                protein_name = line[0]
-                model_name = line[3]
-                score = line[8]
-                if model_name in positive_matches:
-                    if score > positive_matches[model_name][1]:
-                        positive_matches[model_name] = [protein_name, score]
-                    else:
-                        continue
-                else:
+            line = line.strip().split()
+            protein_name = line[0]
+            model_name = line[3]
+            score = line[8]
+            if model_name in positive_matches:
+                if score > positive_matches[model_name][1]:
                     positive_matches[model_name] = [protein_name, score]
-    if keep == False:
-        HMM_Path.unlink()
+                else:
+                    continue
+            else:
+                positive_matches[model_name] = [protein_name, score]
     for proteins in positive_matches.values():
         positive_proteins.append(proteins[0])
     scg_kmers = read_kmers_from_file(protein_file, positive_proteins, 4)
     for accession, protein in positive_matches.items():
         scg_kmers[accession] = scg_kmers.pop(protein[0])
     genome_kmers = {genome : scg_kmers}
+    SCG_HMM_file.unlink()
     return genome_kmers
 
 # --- Read Kmers from SCGs ---
@@ -268,18 +300,26 @@ def main():
         exit('No input provided, please provide genomes "-g", protein "-p", or scg hmm searches "-s"')
     # ---------------------------------------------------------------
 
-
-    # Parse HMM results, calculate distances and compile results
-    print("Parsing HMM results...")
-    print(datetime.datetime.now()) # Remove after testing
+    # Filter HMM results, retaining best hit per protein
+    print("Filtering HMM results...")
+    print(datetime.datetime.now())
     try:
         pool = multiprocessing.Pool(Threads)
-        Kmer_Results = pool.map(partial(Kmer_Parser, keep=keep), HMM_Search_Files)
+        filtered_files = pool.map(partial(HMM_filter, keep=keep), HMM_Search_Files)
+    finally:
+        pool.close()
+        pool.join()
+    
+    # Parse HMM results, calculate distances and compile results
+    print("Parsing HMM results...")
+    print(datetime.datetime.now())
+    try:
+        pool = multiprocessing.Pool(Threads)
+        Kmer_Results = pool.map(partial(Kmer_Parser, keep=keep), filtered_files)
     finally:
         pool.close()
         pool.join()
     Final_Kmer_Dict = merge_dicts(Kmer_Results)
-    print(len(Final_Kmer_Dict))
 
     # Calculate shared Kmer fraction
     print("Calculating shared Kmer fraction...")
