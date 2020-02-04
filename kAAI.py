@@ -323,7 +323,7 @@ def main():
     print(datetime.datetime.now())
     try:
         pool = multiprocessing.Pool(Threads)
-        Kmer_Results = pool.map(partial(Kmer_Parser, keep=keep), filtered_files)
+        Kmer_Results = pool.map(Kmer_Parser, filtered_files)
     finally:
         pool.close()
         pool.join()
