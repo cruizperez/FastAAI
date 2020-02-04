@@ -16,8 +16,16 @@ or Diamond) and the hAAI implemented in MiGA.
 ################################################################################
 """---0.0 Import Modules---"""
 import subprocess
-from pathlib import Path
 import numpy as np
+import argparse
+import multiprocessing
+import datetime
+import shutil
+from pathlib import Path
+from sys import argv
+from sys import exit
+from functools import partial
+
 
 ################################################################################
 """---1.0 Define Functions---"""
@@ -53,7 +61,6 @@ def run_hmmsearch(input_file):
     Returns:
         output -- Path to hmmsearch hits table
     """
-
     file_path = Path(input_file)
     folder = file_path.parent
     name = Path(file_path.name)
@@ -69,6 +76,16 @@ def run_hmmsearch(input_file):
 
 # --- Filter HMM results for best matches ---
 def HMM_filter(SCG_HMM_file, keep):
+    """
+    Filters HMM results for best hits per protein
+    
+    Arguments:
+        SCG_HMM_file {file path} -- Path to HMM results file
+        keep {bool} -- Keep HMM files
+    
+    Returns:
+        outfile -- Path to filtered files
+    """
     HMM_path = Path(SCG_HMM_file)
     name = HMM_path.name
     genome = HMM_path.stem
@@ -103,15 +120,16 @@ def HMM_filter(SCG_HMM_file, keep):
 
 
 # --- Find Kmers from HMM results ---
-def Kmer_Parser(SCG_HMM_file, keep):
-    """[summary]
+def Kmer_Parser(SCG_HMM_file):
+    """
+    Extract kmers from protein files that have hits
+    in the HMM searches.
     
     Arguments:
-        SCG_HMM_file {[type]} -- [description]
-        keep {[type]} -- [description]
+        SCG_HMM_file {file path} -- Path to filtered HMM results.
     
     Returns:
-        [type] -- [description]
+        [genome_kmers] -- Dictionary of kmers per gene. 
     """
     HMM_path = Path(SCG_HMM_file)
     name = HMM_path.name
@@ -226,16 +244,6 @@ def merge_dicts(Dictionaries):
 """---2.0 Main Function---"""
 
 def main():
-    import argparse
-    from sys import argv
-    from sys import exit
-    from pathlib import Path
-    import subprocess
-    import multiprocessing
-    from functools import partial
-    import datetime
-    import shutil
-
     # Setup parser for arguments.
     parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
             description='''This script calculates the average amino acid identity using k-mers\n'''
@@ -323,7 +331,7 @@ def main():
 
     # Calculate shared Kmer fraction
     print("Calculating shared Kmer fraction...")
-    print(datetime.datetime.now()) # Remove after testing
+    print(datetime.datetime.now())
     ID_List = Final_Kmer_Dict.keys()
     try:
         pool = multiprocessing.Pool(Threads, initializer = child_initialize, initargs = (Final_Kmer_Dict,))
@@ -333,7 +341,8 @@ def main():
         pool.join()
 
     # Merge results into a single output
-    print(datetime.datetime.now()) # Remove after testing
+    print("Merging results...")
+    print(datetime.datetime.now())
     with open(Output, 'w') as OutFile:
         for file in Fraction_Results:
             with open(file) as Temp:
