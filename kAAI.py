@@ -68,7 +68,7 @@ def run_hmmsearch(input_file):
     temp_output = folder / name.with_suffix('.temp')
     script_path = Path(__file__)
     script_dir = script_path.parent
-    HMM_complete_model = script_dir / "00.Libraries/02.Knight_SCG/01.Knight_SCG.hmm"
+    HMM_complete_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
     subprocess.call(["hmmsearch", "--tblout", str(output), "-o", str(temp_output), "--cut_ga", "--cpu", "1",
                     str(HMM_complete_model), str(file_path)])
     temp_output.unlink()
@@ -220,9 +220,13 @@ def kAAI_Parser(query_id):
                     jaccard_similarities.append(intersection / union)
                 else:
                     continue
-            out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+            try:
+                out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
                            sum(jaccard_similarities)/len(jaccard_similarities),
                            len(jaccard_similarities), len(final_scg_list)))
+            except:
+                out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                           "NA", "NA", "NA"))
     return temp_output
 
 # --- Initialize function ---
