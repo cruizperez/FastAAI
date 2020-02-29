@@ -285,32 +285,6 @@ def kAAI_calculator(query_id, list_and_db):
                            "NA", "NA", "NA"))
         else:
             continue
-
-
-    #     for target_genome, scg_ids in total_kmer_dictionary.items():
-    #         jaccard_similarities = []
-    #         target_num_scg = len(scg_ids)
-    #         target_scg_list = scg_ids.keys()
-    #         if query_num_scg > target_num_scg:
-    #             final_scg_list = target_scg_list
-    #         else:
-    #             final_scg_list = query_scg_list
-    #         for accession in final_scg_list:
-    #             if accession in query_scg_list and accession in target_scg_list:
-    #                 kmers_query = total_kmer_dictionary[query_id][accession]
-    #                 kmers_target = total_kmer_dictionary[target_genome][accession]
-    #                 intersection = len(kmers_query.intersection(kmers_target))
-    #                 union = len(kmers_query.union(kmers_target))
-    #                 jaccard_similarities.append(intersection / union)
-    #             else:
-    #                 continue
-    #         try:
-    #             out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
-    #                        sum(jaccard_similarities)/len(jaccard_similarities),
-    #                        len(jaccard_similarities), len(final_scg_list)))
-    #         except:
-    #             out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
-    #                        "NA", "NA", "NA"))
     return temp_output
 
 # --- Parse kAAI ---
@@ -625,24 +599,10 @@ def main():
     finally:
         pool.close()
         pool.join()
-
-    # for i in genomes_to_compare:
-    #     kAAI_calculator(i, (genomes_to_compare, database))
-    
     # ------------------------------------------------------
 
-    # # Calculate shared Kmer fraction
-    # print("Calculating shared Kmer fraction...")
-    # print(datetime.datetime.now())
-    # ID_List = Final_Kmer_Dict.keys()
-    # try:
-    #     pool = multiprocessing.Pool(Threads, initializer = child_initialize, initargs = (Final_Kmer_Dict,))
-    #     Fraction_Results = pool.map(kAAI_Parser, ID_List)
-    # finally:
-    #     pool.close()
-    #     pool.join()
-
     # Merge results into a single output
+    # ------------------------------------------------------
     print("Merging results...")
     print(datetime.datetime.now())
     with open(output, 'w') as outFile:
@@ -650,6 +610,7 @@ def main():
             with open(file) as temp:
                 shutil.copyfileobj(temp, outFile)
             file.unlink()
+    # ------------------------------------------------------
 
 if __name__ == "__main__":
     main()
