@@ -4,8 +4,8 @@
 ########################################################################
 # Author:	   Carlos Ruiz
 # Intitution:   Georgia Institute of Technology
-# Version:	  1.0
-# Date:		 Nov 27 2019
+# Version:	  0.8
+# Date:		 March 02, 2020
 
 # Description: Calculates the average amino acid identity using k-mers
 from single copy genes. It is a faster version of the regular AAI (Blast
@@ -20,11 +20,12 @@ import argparse
 import multiprocessing
 import datetime
 import shutil
+import numpy as np
 from pathlib import Path
 from sys import argv
 from sys import exit
 from functools import partial
-import resource
+
 
 ################################################################################
 """---1.0 Define Functions---"""
@@ -197,7 +198,7 @@ def Kmer_Parser(SCG_HMM_file):
     scg_kmers = read_kmers_from_file(protein_file, positive_proteins, 4)
     for accession, protein in positive_matches.items():
         scg_kmers[accession] = scg_kmers.pop(protein[0])
-    genome_kmers = {genome : scg_kmers}
+    genome_kmers = {name : scg_kmers}
     SCG_HMM_file.unlink()
     return genome_kmers
 
@@ -221,7 +222,9 @@ def build_kmers(sequence, ksize):
     for i in range(n_kmers):
         kmer = sequence[i:i + ksize]
         kmers.append(kmer)
-    kmers_set = ','.join(list(set(kmers)))
+    # kmers_set = set(kmers)
+    #! Attention
+    kmers_set = ','.join(set(kmers))
     return kmers_set
 
 # --- Parse kAAI ---
@@ -251,8 +254,11 @@ def kAAI_Parser(query_id):
                 final_scg_list = query_scg_list
             for accession in final_scg_list:
                 if accession in query_scg_list and accession in target_scg_list:
-                    kmers_query = set(total_kmer_dictionary[query_id][accession])
-                    kmers_target = set(total_kmer_dictionary[target_genome][accession])
+                    #! Attention
+                    # kmers_query = total_kmer_dictionary[query_id][accession]
+                    # kmers_target = total_kmer_dictionary[target_genome][accession]
+                    kmers_query = set(total_kmer_dictionary[query_id][accession].split(','))
+                    kmers_target = total_kmer_dictionary[target_genome][accession].split(',')
                     intersection = len(kmers_query.intersection(kmers_target))
                     union = len(kmers_query.union(kmers_target))
                     jaccard_similarities.append(intersection / union)
@@ -267,7 +273,7 @@ def kAAI_Parser(query_id):
                            "NA", "NA", "NA"))
     return temp_output
 
-# --- Initialize function ---
+# --- Initializer function ---
 def child_initialize(_dictionary):
     """
     Make dictionary available for multiprocessing
@@ -410,6 +416,7 @@ def main():
             with open(file) as Temp:
                 shutil.copyfileobj(Temp, output)
             file.unlink()
+    print("kAAI finishied correctly!!")
     # ------------------------------------------------------
 
 if __name__ == "__main__":
