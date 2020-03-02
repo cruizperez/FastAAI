@@ -16,7 +16,6 @@ or Diamond) and the hAAI implemented in MiGA.
 ################################################################################
 """---0.0 Import Modules---"""
 import subprocess
-import numpy as np
 import argparse
 import multiprocessing
 import datetime
@@ -25,14 +24,14 @@ from pathlib import Path
 from sys import argv
 from sys import exit
 from functools import partial
-
+import resource
 
 ################################################################################
 """---1.0 Define Functions---"""
 # --- Run prodigal ---
 def run_prodigal(input_file):
     """
-    Runs prodigal and stores faa files
+    Runs prodigal, compares translation tables and stores faa files
 
     Arguments:
        input_file -- Path to genome FastA file
@@ -43,11 +42,54 @@ def run_prodigal(input_file):
     file_path = Path(input_file)
     prefix = Path(file_path.stem)
     folder = file_path.parent
-    output = folder / prefix.with_suffix('.faa')
+    final_output = folder / prefix.with_suffix('.faa')
+    output_11 = folder / prefix.with_suffix('.faa.11')
     temp_output = folder / prefix.with_suffix('.temp')
-    subprocess.call(["prodigal", "-i", str(file_path), "-a", str(output), "-p", "meta", "-q", "-o", str(temp_output)])
+    subprocess.call(["prodigal", "-i", str(file_path), "-a", str(output_11), 
+                    "-p", "meta", "-q", "-o", str(temp_output)])
+    output_4 = folder / prefix.with_suffix('.faa.4')
+    temp_output = folder / prefix.with_suffix('.temp')
+    subprocess.call(["prodigal", "-i", str(file_path), "-a", str(output_4), 
+                    "-p", "meta", "-g", "4", "-q", "-o", str(temp_output)])
+
+    # Compare translation tables
+    length_4 = 0
+    length_11 = 0
+    with open(output_4, 'r') as table_4:
+        for line in table_4:
+            if line.startswith(">"):
+                continue
+            else:
+                length_4 += len(line.strip())
+
+    with open(output_11, 'r') as table_11:
+        for line in table_11:
+            if line.startswith(">"):
+                continue
+            else:
+                length_11 += len(line.strip())
+    
+    if (length_4 / length_11) >= 1.1:
+        shutil.copy(output_4, final_output)
+    else:
+        shutil.copy(str(output_11), str(final_output))
+    
+    # Remove intermediate files
+    output_4.unlink()
+    output_11.unlink()
     temp_output.unlink()
-    return output
+
+    with open(final_output) as final_protein, open(temp_output) as temporal_file:
+        for line in final_protein:
+            if line.startswith(">"):
+                temporal_file.write("{}".format(line))
+            else:
+                line.replace('*', '')
+                temporal_file.write("{}".format(line))
+    shutil.copy(str(temp_output), str(final_output))
+    temp_output.unlink()
+
+    return final_output
 
 # --- Run hmmsearch ---
 def run_hmmsearch(input_file):
@@ -88,7 +130,6 @@ def HMM_filter(SCG_HMM_file, keep):
     """
     HMM_path = Path(SCG_HMM_file)
     name = HMM_path.name
-    genome = HMM_path.stem
     folder = HMM_path.parent
     outfile = folder / Path(name).with_suffix('.filt')
     HMM_hit_dict = {}
@@ -114,7 +155,7 @@ def HMM_filter(SCG_HMM_file, keep):
         for hits in HMM_hit_dict.values():
             output.write("{}".format(hits[1]))
     if keep == False:
-        HMM_Path.unlink()
+        HMM_path.unlink()
     return outfile
 
 
@@ -136,7 +177,6 @@ def Kmer_Parser(SCG_HMM_file):
     genome = HMM_path.stem
     folder = HMM_path.parent
     protein_file = folder / Path(name).with_suffix('.faa')
-    kmer_dic = {}
     positive_matches = {}
     positive_proteins = []
     with open(HMM_path, 'r') as HMM_Input:
@@ -181,22 +221,20 @@ def build_kmers(sequence, ksize):
     for i in range(n_kmers):
         kmer = sequence[i:i + ksize]
         kmers.append(kmer)
-        kmers_set = set(kmers)
+    kmers_set = ','.join(list(set(kmers)))
     return kmers_set
-
-# --- Read Kmers from files ---
-def read_total_kmers_from_file(filename, positive_hits, ksize):
-    from Bio.SeqIO.FastaIO import SimpleFastaParser
-    all_kmers = []
-    with open(filename) as Fasta_in:
-        for _, sequence in SimpleFastaParser(Fasta_in):
-            kmers = build_kmers(sequence, ksize)
-            all_kmers += kmers
-    return all_kmers
 
 # --- Parse kAAI ---
 def kAAI_Parser(query_id):
-
+    """
+    Calculates Jaccard distances on kmers from proteins shared
+    
+    Arguments:
+        query_id {str} -- Id of the query genome
+    
+    Returns:
+        [Path to output] -- Path to output file
+    """
     file_path = Path(query_id)
     running_folder = Path.cwd()
     temp_output = running_folder / file_path.with_suffix('.aai.temp')
@@ -213,8 +251,8 @@ def kAAI_Parser(query_id):
                 final_scg_list = query_scg_list
             for accession in final_scg_list:
                 if accession in query_scg_list and accession in target_scg_list:
-                    kmers_query = total_kmer_dictionary[query_id][accession]
-                    kmers_target = total_kmer_dictionary[target_genome][accession]
+                    kmers_query = set(total_kmer_dictionary[query_id][accession])
+                    kmers_target = set(total_kmer_dictionary[target_genome][accession])
                     intersection = len(kmers_query.intersection(kmers_target))
                     union = len(kmers_query.union(kmers_target))
                     jaccard_similarities.append(intersection / union)
@@ -231,8 +269,11 @@ def kAAI_Parser(query_id):
 
 # --- Initialize function ---
 def child_initialize(_dictionary):
-     global total_kmer_dictionary
-     total_kmer_dictionary = _dictionary
+    """
+    Make dictionary available for multiprocessing
+    """
+    global total_kmer_dictionary
+    total_kmer_dictionary = _dictionary
 
 def merge_dicts(Dictionaries):
     """
@@ -256,103 +297,120 @@ def main():
             '''Usage: ''' + argv[0] + ''' -p [Protein Files] -t [Threads] -o [Output]\n'''
             '''Global mandatory parameters: -g [Genome Files] OR -p [Protein Files] OR -s [SCG HMM Results] -o [AAI Table Output]\n'''
             '''Optional Database Parameters: See ''' + argv[0] + ' -h')
-    parser.add_argument('-g', '--genomes', dest='Genome_List', action='store', nargs='+', required=False, help='List of input genomes. Implies step 1')
-    parser.add_argument('-p', '--proteins', dest='Protein_Files', action='store', nargs='+', required=False, help='List of input protein files')
-    parser.add_argument('-s', '--scg_hmm', dest='HMM_Files', action='store', nargs='+', required=False, help='List of hmm search results')
-    parser.add_argument('-o', '--output', dest='Output', action='store', required=True, help='Output File')
-    parser.add_argument('-t', '--threads', dest='Threads', action='store', default=1, type=int, required=False, help='Number of threads to use, by default 1')
+    parser.add_argument('-g', '--genomes', dest='genome_list', action='store', nargs='+', required=False, help='List of input genomes.')
+    parser.add_argument('-p', '--proteins', dest='protein_files', action='store', nargs='+', required=False, help='List of input protein files. They should have the .faa extension.')
+    parser.add_argument('-s', '--scg_hmm', dest='HMM_files', action='store', nargs='+', required=False, help='List of hmm search results')
+    parser.add_argument('-o', '--output', dest='outfile', action='store', required=True, help='Output File')
+    parser.add_argument('-t', '--threads', dest='threads', action='store', default=1, type=int, required=False, help='Number of threads to use, by default 1')
     parser.add_argument('-k', '--keep', dest='keep', action='store_false', required=False, help='Keep intermediate files, by default true')
     args = parser.parse_args()
 
-    Genome_List = args.Genome_List
-    Protein_Files = args.Protein_Files
-    HMM_Files = args.HMM_Files
-    Output = args.Output
-    Threads = args.Threads
+    genome_list = args.genome_list
+    protein_files = args.protein_files
+    HMM_files = args.HMM_files
+    outfile = args.outfile
+    threads = args.threads
     keep = args.keep
 
-    # Predict proteins and perform HMM searches
     print("kAAI started on {}".format(datetime.datetime.now())) # Remove after testing
-    if Genome_List != None:
-        print("Starting from Genomes...")
-        print("Predicting proteins...")
-        Protein_Files = []
-        try:
-            pool = multiprocessing.Pool(Threads)
-            Protein_Files = pool.map(run_prodigal, Genome_List)
-        finally:
-            pool.close()
-            pool.join()
-        print("Searching HMM models...")
-        try:
-            pool = multiprocessing.Pool(Threads)
-            HMM_Search_Files = pool.map(run_hmmsearch, Protein_Files)
-        finally:
-            pool.close()
-            pool.join()
-    elif Protein_Files != None:
-        print("Starting from Proteins...")
-        print("Searching HMM models...")
-        try:
-            pool = multiprocessing.Pool(Threads)
-            HMM_Search_Files = pool.map(run_hmmsearch, Protein_Files)
-        finally:
-            pool.close()
-            pool.join()
-    elif HMM_Files != None:
-        print("Starting from HMM searches...")
-        HMM_Search_Files = HMM_Files
-    elif HMM_Files != None and Protein_Files != None:
+    # Check input
+    # ------------------------------------------------------
+    if HMM_files != None and protein_files != None:
         exit('Please provide only one input. You provided Proteins and HMM results')
-    elif HMM_Files != None and Genome_List != None:
+    elif HMM_files != None and genome_list != None:
         exit('Please provide only one input. You provided HMM results and Genomes')
-    elif Protein_Files != None and Genome_List != None:
+    elif protein_files != None and genome_list != None:
         exit('Please provide only one input. You provided Proteins and Genomes')
-    else:
+    elif protein_files == None and genome_list == None and HMM_files == None:
         exit('No input provided, please provide genomes "-g", protein "-p", or scg hmm searches "-s"')
-    # ---------------------------------------------------------------
+    # ------------------------------------------------------
 
+    # Predict proteins and perform HMM searches
+    # ------------------------------------------------------
+    print("kAAI started on {}".format(datetime.datetime.now()))
+    if genome_list != None:
+        print("Starting from Genomes.")
+        print("Predicting proteins...   ", end="")
+        protein_files = []
+        try:
+            pool = multiprocessing.Pool(threads)
+            protein_files = pool.map(run_prodigal, genome_list)
+        finally:
+            pool.close()
+            pool.join()
+        print("Done")
+        print("Searching HMM models...   ", end="")
+        try:
+            pool = multiprocessing.Pool(threads)
+            HMM_Search_Files = pool.map(run_hmmsearch, protein_files)
+        finally:
+            pool.close()
+            pool.join()
+        print("Done")
+    elif protein_files != None:
+        print("Starting from Proteins.")
+        print("Searching HMM models...   ", end="")
+        try:
+            pool = multiprocessing.Pool(threads)
+            HMM_Search_Files = pool.map(run_hmmsearch, protein_files)
+        finally:
+            pool.close()
+            pool.join()
+        print("Done")
+    elif HMM_files != None:
+        print("Starting from HMM searches.")
+        HMM_Search_Files = HMM_files
+    # ------------------------------------------------------
+    
     # Filter HMM results, retaining best hit per protein
+    # ------------------------------------------------------
     print("Filtering HMM results...")
     print(datetime.datetime.now())
     try:
-        pool = multiprocessing.Pool(Threads)
+        pool = multiprocessing.Pool(threads)
         filtered_files = pool.map(partial(HMM_filter, keep=keep), HMM_Search_Files)
     finally:
         pool.close()
         pool.join()
-    
-    # Parse HMM results, calculate distances and compile results
+    # ------------------------------------------------------
+
+    # Find kmers per SCG per genome
+    # ------------------------------------------------------
     print("Parsing HMM results...")
     print(datetime.datetime.now())
     try:
-        pool = multiprocessing.Pool(Threads)
+        pool = multiprocessing.Pool(threads)
         Kmer_Results = pool.map(Kmer_Parser, filtered_files)
     finally:
         pool.close()
         pool.join()
     Final_Kmer_Dict = merge_dicts(Kmer_Results)
-
-    # Calculate shared Kmer fraction
+    del Kmer_Results
+    # ------------------------------------------------------
+    
+    # Calculate Jaccard distances
+    # ------------------------------------------------------
     print("Calculating shared Kmer fraction...")
     print(datetime.datetime.now())
     ID_List = Final_Kmer_Dict.keys()
     try:
-        pool = multiprocessing.Pool(Threads, initializer = child_initialize, initargs = (Final_Kmer_Dict,))
+        pool = multiprocessing.Pool(threads, initializer = child_initialize, initargs = (Final_Kmer_Dict,))
         Fraction_Results = pool.map(kAAI_Parser, ID_List)
     finally:
         pool.close()
         pool.join()
-
+    # ------------------------------------------------------
+    
     # Merge results into a single output
+    # ------------------------------------------------------
     print("Merging results...")
     print(datetime.datetime.now())
-    with open(Output, 'w') as OutFile:
+    with open(outfile, 'w') as output:
         for file in Fraction_Results:
             with open(file) as Temp:
-                shutil.copyfileobj(Temp, OutFile)
+                shutil.copyfileobj(Temp, output)
             file.unlink()
-
+    # ------------------------------------------------------
 
 if __name__ == "__main__":
     main()
