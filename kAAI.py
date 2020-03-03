@@ -20,11 +20,12 @@ import argparse
 import multiprocessing
 import datetime
 import shutil
-import numpy as np
+from numpy import random
 from pathlib import Path
 from sys import argv
 from sys import exit
 from functools import partial
+import sys
 
 
 ################################################################################
@@ -112,7 +113,7 @@ def run_hmmsearch(input_file):
     script_path = Path(__file__)
     script_dir = script_path.parent
     HMM_complete_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
-    subprocess.call(["hmmsearch", "--tblout", str(output), "-o", str(temp_output), "--cut_ga", "--cpu", "1",
+    subprocess.call(["hmmsearch", "--tblout", str(output), "-o", str(temp_output), "--cut_tc", "--cpu", "1",
                     str(HMM_complete_model), str(file_path)])
     temp_output.unlink()
     return output
@@ -143,15 +144,20 @@ def HMM_filter(SCG_HMM_file, keep):
                 protein_name = hit[0]
                 score = hit[8]
                 if protein_name in HMM_hit_dict:
-                    if score > HMM_hit_dict[protein_name][0]:
+                    #! Attention
+                    if score > HMM_hit_dict[protein_name][0] and score >= 50:
+                    # if score > HMM_hit_dict[protein_name][0]:
                         HMM_hit_dict[protein_name] = [score, line]
                     elif score < HMM_hit_dict[protein_name][0]:
                         continue
                     else:
-                        if np.random.randint(2) > 0:
+                        if random.randint(2) > 0 and score >= 50:
+                        # if random.randint(2) > 0:
                             HMM_hit_dict[protein_name] = [score, line]
                 else:
-                    HMM_hit_dict[protein_name] = [score, line]
+                    if score >= 50:
+                        HMM_hit_dict[protein_name] = [score, line]
+                    # HMM_hit_dict[protein_name] = [score, line]
     with open(outfile, 'w') as output:
         for hits in HMM_hit_dict.values():
             output.write("{}".format(hits[1]))
@@ -199,6 +205,8 @@ def Kmer_Parser(SCG_HMM_file):
     for accession, protein in positive_matches.items():
         scg_kmers[accession] = scg_kmers.pop(protein[0])
     genome_kmers = {name : scg_kmers}
+    #! Attention
+    print("Dictionary size: {}".format(get_size(genome_kmers)))
     SCG_HMM_file.unlink()
     return genome_kmers
 
@@ -222,9 +230,9 @@ def build_kmers(sequence, ksize):
     for i in range(n_kmers):
         kmer = sequence[i:i + ksize]
         kmers.append(kmer)
-    # kmers_set = set(kmers)
-    #! Attention
-    kmers_set = ','.join(set(kmers))
+    kmers_set = set(kmers)
+    #!Attention
+    # kmers_set = ','.join(set(kmers))
     return kmers_set
 
 # --- Parse kAAI ---
@@ -245,6 +253,7 @@ def kAAI_Parser(query_id):
     query_scg_list = total_kmer_dictionary[query_id].keys()
     with open(temp_output, 'w') as out_file:
         for target_genome, scg_ids in total_kmer_dictionary.items():
+            start = datetime.datetime.now().time()
             jaccard_similarities = []
             target_num_scg = len(scg_ids)
             target_scg_list = scg_ids.keys()
@@ -254,11 +263,11 @@ def kAAI_Parser(query_id):
                 final_scg_list = query_scg_list
             for accession in final_scg_list:
                 if accession in query_scg_list and accession in target_scg_list:
-                    #! Attention
-                    # kmers_query = total_kmer_dictionary[query_id][accession]
-                    # kmers_target = total_kmer_dictionary[target_genome][accession]
-                    kmers_query = set(total_kmer_dictionary[query_id][accession].split(','))
-                    kmers_target = total_kmer_dictionary[target_genome][accession].split(',')
+                    #!Attention
+                    kmers_query = total_kmer_dictionary[query_id][accession]
+                    kmers_target = total_kmer_dictionary[target_genome][accession]
+                    # kmers_query = set(total_kmer_dictionary[query_id][accession].split(','))
+                    # kmers_target = total_kmer_dictionary[target_genome][accession].split(',')
                     intersection = len(kmers_query.intersection(kmers_target))
                     union = len(kmers_query.union(kmers_target))
                     jaccard_similarities.append(intersection / union)
@@ -271,6 +280,8 @@ def kAAI_Parser(query_id):
             except:
                 out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
                            "NA", "NA", "NA"))
+            end = datetime.datetime.now().time()
+            print("Comparison time: {}".format(datetime.datetime.combine(datetime.date.min, end) - datetime.datetime.combine(datetime.date.min, start)))
     return temp_output
 
 # --- Initializer function ---
@@ -291,6 +302,25 @@ def merge_dicts(Dictionaries):
         result.update(dictionary)
     return result
 
+def get_size(obj, seen=None):
+    """Recursively finds size of objects"""
+    size = sys.getsizeof(obj)
+    if seen is None:
+        seen = set()
+    obj_id = id(obj)
+    if obj_id in seen:
+        return 0
+    # Important mark as seen *before* entering recursion to gracefully handle
+    # self-referential objects
+    seen.add(obj_id)
+    if isinstance(obj, dict):
+        size += sum([get_size(v, seen) for v in obj.values()])
+        size += sum([get_size(k, seen) for k in obj.keys()])
+    elif hasattr(obj, '__dict__'):
+        size += get_size(obj.__dict__, seen)
+    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
+        size += sum([get_size(i, seen) for i in obj])
+    return size
 ################################################################################
 """---2.0 Main Function---"""
 
