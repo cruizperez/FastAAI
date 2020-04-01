@@ -112,14 +112,14 @@ def run_hmmsearch(input_file):
     temp_output = folder / name.with_suffix('.temp')
     script_path = Path(__file__)
     script_dir = script_path.parent
-    HMM_complete_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
+    hmm_complete_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
     subprocess.call(["hmmsearch", "--tblout", str(output), "-o", str(temp_output), "--cut_tc", "--cpu", "1",
-                    str(HMM_complete_model), str(file_path)])
+                    str(hmm_complete_model), str(file_path)])
     temp_output.unlink()
     return output
 
 # --- Filter HMM results for best matches ---
-def HMM_filter(SCG_HMM_file, keep):
+def hmm_filter(scg_hmm_file, keep):
     """
     Filters HMM results for best hits per protein
     
@@ -130,45 +130,39 @@ def HMM_filter(SCG_HMM_file, keep):
     Returns:
         outfile -- Path to filtered files
     """
-    HMM_path = Path(SCG_HMM_file)
-    name = HMM_path.name
-    folder = HMM_path.parent
+    hmm_path = Path(scg_hmm_file)
+    name = hmm_path.name
+    folder = hmm_path.parent
     outfile = folder / Path(name).with_suffix('.filt')
-    HMM_hit_dict = {}
-    with open(SCG_HMM_file, 'r') as hit_file:
+    hmm_hit_dict = {}
+    with open(scg_hmm_file, 'r') as hit_file:
         for line in hit_file:
             if line.startswith("#"):
                 continue
             else:
                 hit = line.strip().split()
                 protein_name = hit[0]
-                score = hit[8]
-                if protein_name in HMM_hit_dict:
-                    #! Attention
-                    if score > HMM_hit_dict[protein_name][0] and score >= 50:
-                    # if score > HMM_hit_dict[protein_name][0]:
-                        HMM_hit_dict[protein_name] = [score, line]
-                    elif score < HMM_hit_dict[protein_name][0]:
+                score = float(hit[8])
+                if protein_name in hmm_hit_dict:
+                    if score > hmm_hit_dict[protein_name][0]:
+                        hmm_hit_dict[protein_name] = [score, line]
+                    elif score < hmm_hit_dict[protein_name][0]:
                         continue
                     else:
-                        if random.randint(2) > 0 and score >= 50:
-                        # if random.randint(2) > 0:
-                            HMM_hit_dict[protein_name] = [score, line]
+                        if random.randint(2) > 0:
+                            hmm_hit_dict[protein_name] = [score, line]
                 else:
-                    if score >= 50:
-                        HMM_hit_dict[protein_name] = [score, line]
-                    # HMM_hit_dict[protein_name] = [score, line]
+                    hmm_hit_dict[protein_name] = [score, line]
     with open(outfile, 'w') as output:
-        for hits in HMM_hit_dict.values():
+        for hits in hmm_hit_dict.values():
             output.write("{}".format(hits[1]))
     if keep == False:
-        HMM_path.unlink()
+        hmm_path.unlink()
     return outfile
 
 
-
 # --- Find Kmers from HMM results ---
-def Kmer_Parser(SCG_HMM_file):
+def Kmer_Parser(scg_hmm_file):
     """
     Extract kmers from protein files that have hits
     in the HMM searches.
@@ -179,15 +173,14 @@ def Kmer_Parser(SCG_HMM_file):
     Returns:
         [genome_kmers] -- Dictionary of kmers per gene. 
     """
-    HMM_path = Path(SCG_HMM_file)
-    name = HMM_path.name
-    genome = HMM_path.stem
-    folder = HMM_path.parent
+    hmm_path = Path(scg_hmm_file)
+    name = hmm_path.name
+    folder = hmm_path.parent
     protein_file = folder / Path(name).with_suffix('.faa')
     positive_matches = {}
     positive_proteins = []
-    with open(HMM_path, 'r') as HMM_Input:
-        for line in HMM_Input:
+    with open(hmm_path, 'r') as hmm_Input:
+        for line in hmm_Input:
             line = line.strip().split()
             protein_name = line[0]
             model_name = line[3]
@@ -205,9 +198,7 @@ def Kmer_Parser(SCG_HMM_file):
     for accession, protein in positive_matches.items():
         scg_kmers[accession] = scg_kmers.pop(protein[0])
     genome_kmers = {name : scg_kmers}
-    #! Attention
-    print("Dictionary size: {}".format(get_size(genome_kmers)))
-    SCG_HMM_file.unlink()
+    scg_hmm_file.unlink()
     return genome_kmers
 
 # --- Read Kmers from SCGs ---
@@ -230,9 +221,9 @@ def build_kmers(sequence, ksize):
     for i in range(n_kmers):
         kmer = sequence[i:i + ksize]
         kmers.append(kmer)
-    kmers_set = set(kmers)
+    #kmers_set = set(kmers)
     #!Attention
-    # kmers_set = ','.join(set(kmers))
+    kmers_set = ','.join(set(kmers))
     return kmers_set
 
 # --- Parse kAAI ---
@@ -264,10 +255,10 @@ def kAAI_Parser(query_id):
             for accession in final_scg_list:
                 if accession in query_scg_list and accession in target_scg_list:
                     #!Attention
-                    kmers_query = total_kmer_dictionary[query_id][accession]
-                    kmers_target = total_kmer_dictionary[target_genome][accession]
-                    # kmers_query = set(total_kmer_dictionary[query_id][accession].split(','))
-                    # kmers_target = total_kmer_dictionary[target_genome][accession].split(',')
+                    # kmers_query = total_kmer_dictionary[query_id][accession]
+                    # kmers_target = total_kmer_dictionary[target_genome][accession]
+                    kmers_query = set(total_kmer_dictionary[query_id][accession].split(','))
+                    kmers_target = total_kmer_dictionary[target_genome][accession].split(',')
                     intersection = len(kmers_query.intersection(kmers_target))
                     union = len(kmers_query.union(kmers_target))
                     jaccard_similarities.append(intersection / union)
@@ -302,25 +293,6 @@ def merge_dicts(Dictionaries):
         result.update(dictionary)
     return result
 
-def get_size(obj, seen=None):
-    """Recursively finds size of objects"""
-    size = sys.getsizeof(obj)
-    if seen is None:
-        seen = set()
-    obj_id = id(obj)
-    if obj_id in seen:
-        return 0
-    # Important mark as seen *before* entering recursion to gracefully handle
-    # self-referential objects
-    seen.add(obj_id)
-    if isinstance(obj, dict):
-        size += sum([get_size(v, seen) for v in obj.values()])
-        size += sum([get_size(k, seen) for k in obj.keys()])
-    elif hasattr(obj, '__dict__'):
-        size += get_size(obj.__dict__, seen)
-    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
-        size += sum([get_size(i, seen) for i in obj])
-    return size
 ################################################################################
 """---2.0 Main Function---"""
 
@@ -335,7 +307,7 @@ def main():
             '''Optional Database Parameters: See ''' + argv[0] + ' -h')
     parser.add_argument('-g', '--genomes', dest='genome_list', action='store', nargs='+', required=False, help='List of input genomes.')
     parser.add_argument('-p', '--proteins', dest='protein_files', action='store', nargs='+', required=False, help='List of input protein files. They should have the .faa extension.')
-    parser.add_argument('-s', '--scg_hmm', dest='HMM_files', action='store', nargs='+', required=False, help='List of hmm search results')
+    parser.add_argument('-s', '--scg_hmm', dest='hmm_files', action='store', nargs='+', required=False, help='List of hmm search results')
     parser.add_argument('-o', '--output', dest='outfile', action='store', required=True, help='Output File')
     parser.add_argument('-t', '--threads', dest='threads', action='store', default=1, type=int, required=False, help='Number of threads to use, by default 1')
     parser.add_argument('-k', '--keep', dest='keep', action='store_false', required=False, help='Keep intermediate files, by default true')
@@ -343,7 +315,7 @@ def main():
 
     genome_list = args.genome_list
     protein_files = args.protein_files
-    HMM_files = args.HMM_files
+    hmm_files = args.hmm_files
     outfile = args.outfile
     threads = args.threads
     keep = args.keep
@@ -351,13 +323,13 @@ def main():
     print("kAAI started on {}".format(datetime.datetime.now())) # Remove after testing
     # Check input
     # ------------------------------------------------------
-    if HMM_files != None and protein_files != None:
+    if hmm_files != None and protein_files != None:
         exit('Please provide only one input. You provided Proteins and HMM results')
-    elif HMM_files != None and genome_list != None:
+    elif hmm_files != None and genome_list != None:
         exit('Please provide only one input. You provided HMM results and Genomes')
     elif protein_files != None and genome_list != None:
         exit('Please provide only one input. You provided Proteins and Genomes')
-    elif protein_files == None and genome_list == None and HMM_files == None:
+    elif protein_files == None and genome_list == None and hmm_files == None:
         exit('No input provided, please provide genomes "-g", protein "-p", or scg hmm searches "-s"')
     # ------------------------------------------------------
 
@@ -378,7 +350,7 @@ def main():
         print("Searching HMM models...   ", end="")
         try:
             pool = multiprocessing.Pool(threads)
-            HMM_Search_Files = pool.map(run_hmmsearch, protein_files)
+            hmm_search_files = pool.map(run_hmmsearch, protein_files)
         finally:
             pool.close()
             pool.join()
@@ -388,14 +360,14 @@ def main():
         print("Searching HMM models...   ", end="")
         try:
             pool = multiprocessing.Pool(threads)
-            HMM_Search_Files = pool.map(run_hmmsearch, protein_files)
+            hmm_search_files = pool.map(run_hmmsearch, protein_files)
         finally:
             pool.close()
             pool.join()
         print("Done")
-    elif HMM_files != None:
+    elif hmm_files != None:
         print("Starting from HMM searches.")
-        HMM_Search_Files = HMM_files
+        hmm_search_files = hmm_files
     # ------------------------------------------------------
     
     # Filter HMM results, retaining best hit per protein
@@ -404,7 +376,7 @@ def main():
     print(datetime.datetime.now())
     try:
         pool = multiprocessing.Pool(threads)
-        filtered_files = pool.map(partial(HMM_filter, keep=keep), HMM_Search_Files)
+        filtered_files = pool.map(partial(hmm_filter, keep=keep), hmm_search_files)
     finally:
         pool.close()
         pool.join()
@@ -428,10 +400,10 @@ def main():
     # ------------------------------------------------------
     print("Calculating shared Kmer fraction...")
     print(datetime.datetime.now())
-    ID_List = Final_Kmer_Dict.keys()
+    id_List = Final_Kmer_Dict.keys()
     try:
         pool = multiprocessing.Pool(threads, initializer = child_initialize, initargs = (Final_Kmer_Dict,))
-        Fraction_Results = pool.map(kAAI_Parser, ID_List)
+        Fraction_Results = pool.map(kAAI_Parser, id_List)
     finally:
         pool.close()
         pool.join()
