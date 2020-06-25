@@ -183,10 +183,6 @@ def kmer_extract(input_files):
     final_filename = input_files[0]
     protein_file = input_files[1]
     scg_hmm_file = input_files[2]
-    # hmm_path = Path(scg_hmm_file)
-    # name = hmm_path.name
-    # folder = hmm_path.parent
-    # protein_file = folder / Path(name).with_suffix('.faa')
     positive_matches = {}
     positive_proteins = []
     with open(scg_hmm_file, 'r') as hmm_input:
