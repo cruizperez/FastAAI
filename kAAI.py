@@ -321,7 +321,7 @@ def main():
     keep = args.keep
 
     print("kAAI started on {}".format(datetime.datetime.now())) # Remove after testing
-    # Check input
+    # Check user input
     # ------------------------------------------------------
     if hmm_files != None and protein_files != None:
         exit('Please provide only one input. You provided Proteins and HMM results')
