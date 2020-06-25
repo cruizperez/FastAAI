@@ -25,7 +25,7 @@ from pathlib import Path
 from sys import argv
 from sys import exit
 from functools import partial
-import sys, textwrap
+import sys, textwrap, time
 
 
 
@@ -164,8 +164,6 @@ def hmm_filter(scg_hmm_file, keep):
     with open(outfile, 'w') as output:
         for hits in hmm_hit_dict.values():
             output.write("{}".format(hits[1]))
-    if keep == False:
-        hmm_path.unlink()
     return str(outfile)
 # ------------------------------------------------------
 
@@ -210,7 +208,6 @@ def kmer_extract(input_files):
     for accession, protein in positive_matches.items():
         scg_kmers[accession] = scg_kmers.pop(protein[0])
     genome_kmers = {final_filename : scg_kmers}
-    Path(scg_hmm_file).unlink()
     return genome_kmers
 # ------------------------------------------------------
 
@@ -458,7 +455,6 @@ def main():
             print("You chose to start from hmmsearch results (-s).")
             print("However, I also need the location of the proteins used for the search.")
             exit("Please provide it with --prot_query for the queries and with --prot_ref for the references.")
-
     # ------------------------------------------------------
 
     # Get files from the query and reference lists
@@ -470,13 +466,24 @@ def main():
         print('I will perform an all vs all comparison :)')
     query_list = []
     reference_list = []
+    query_proteins = []
+    reference_proteins = []
     with open(queries, 'r') as query_file:
         for line in query_file:
             query_list.append(line.strip())
+    if hmms == True:
+        with open(proteins_query, 'r') as prot_seq_query:
+            for line in prot_seq_query:
+                query_proteins.append(line.strip())
     if same_genomes == False:
         with open(references, 'r') as reference_file:
             for line in reference_file:
                 reference_list.append(line.strip())
+        if hmms == True:
+            with open(proteins_reference, 'r') as prot_seq_ref:
+                for line in prot_seq_ref:
+                    reference_proteins.append(line.strip())
+    
     # ------------------------------------------------------
 
     # Create a dictionary with resulting filenames and a list with dictionary keys
@@ -485,7 +492,7 @@ def main():
     reference_file_names = {}
     query_key_names = []
     reference_key_names = []
-    for query in query_list:
+    for index, query in enumerate(query_list):
         query_name = str(Path(query).name)
         # Add final name to query list
         if extension != None:
@@ -498,9 +505,9 @@ def main():
         elif proteins == True:
             query_file_names[query_name] = [None, query, query + '.hmm', query + '.hmm.filt']
         elif hmms == True:
-            query_file_names[query_name] = [None, None, query, query + '.filt']
+            query_file_names[query_name] = [None, query_proteins[index], query, query + '.filt']
     if same_genomes == False:
-        for reference in reference_list:
+        for index, reference in enumerate(reference_list):
             reference_name = str(Path(reference).name)
             # Add final name to query list
             if extension != None:
@@ -513,8 +520,9 @@ def main():
             elif proteins == True:
                 reference_file_names[reference_name] = [None, reference, reference + '.hmm', reference + '.hmm.filt']
             elif hmms == True:
-                reference_file_names[reference_name] = [None, None, reference, reference + '.filt']
+                reference_file_names[reference_name] = [None, reference_proteins[index], reference, reference + '.filt']
     print(query_file_names) #! Remove after testing
+    print(reference_file_names) 
     # ------------------------------------------------------
     #TODO: Add support for databases here (future)
 
@@ -599,6 +607,7 @@ def main():
         pool.join()
     # Filter reference HMM search results
     if same_genomes == False:
+        print(reference_hmm_results)
         try:
             pool = multiprocessing.Pool(threads)
             query_filtered_hmms = pool.map(partial(hmm_filter, keep=keep), reference_hmm_results)
