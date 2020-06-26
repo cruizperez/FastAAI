@@ -6,3 +6,5 @@ conda config --add channels bioconda
 conda create -n kAAI hmmer prodigal numpy biopython
 
 conda activate kAAI
+
+End
