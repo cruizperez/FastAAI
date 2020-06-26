@@ -517,7 +517,7 @@ def main():
                 reference_file_names[reference_name] = [None, reference, reference + '.hmm', reference + '.hmm.filt']
             elif hmms == True:
                 reference_file_names[reference_name] = [None, reference_proteins[index], reference, reference + '.filt']
-    print(query_file_names) #! Remove after testin
+    print(query_file_names) #! Remove after testing
     print(reference_file_names) 
     # ------------------------------------------------------
     #TODO: Add support for databases here (future)
