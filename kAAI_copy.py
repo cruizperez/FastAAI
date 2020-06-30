@@ -21,7 +21,7 @@ from pathlib import Path
 from sys import argv
 from sys import exit
 from functools import partial
-import sys, textwrap, time, pickle
+import sys, textwrap, time, pickle, gzip
 
 
 
@@ -251,7 +251,7 @@ def single_kaai_parser(query_id):
     # Start comparison with all genomes in the query dictionary
     with open(temp_output, 'w') as out_file:
         for target_genome, scg_ids in query_kmer_dictionary.items():
-            start = datetime.datetime.now().time()
+            #start = datetime.datetime.now().time()
             jaccard_similarities = []
             # Get number and list of SCG detected in reference
             target_num_scg = len(scg_ids)
@@ -280,8 +280,8 @@ def single_kaai_parser(query_id):
             except:
                 out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
                            "NA", "NA", "NA"))
-            end = datetime.datetime.now().time()
-            print("Comparison time: {}".format(datetime.datetime.combine(datetime.date.min, end) - datetime.datetime.combine(datetime.date.min, start)))
+            #end = datetime.datetime.now().time()
+            #print("Comparison time: {}".format(datetime.datetime.combine(datetime.date.min, end) - datetime.datetime.combine(datetime.date.min, start)))
     return temp_output
 # ------------------------------------------------------
 
@@ -306,7 +306,7 @@ def double_kaai_parser(query_id):
     # Start comparison with all genomes in the query dictionary
     with open(temp_output, 'w') as out_file:
         for target_genome, scg_ids in ref_kmer_dictionary.items():
-            start = datetime.datetime.now().time()
+            #start = datetime.datetime.now().time()
             jaccard_similarities = []
             # Get number and list of SCG detected in reference
             target_num_scg = len(scg_ids)
@@ -335,8 +335,8 @@ def double_kaai_parser(query_id):
             except:
                 out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
                            "NA", "NA", "NA"))
-            end = datetime.datetime.now().time()
-            print("Comparison time: {}".format(datetime.datetime.combine(datetime.date.min, end) - datetime.datetime.combine(datetime.date.min, start)))
+            #end = datetime.datetime.now().time()
+            #print("Comparison time: {}".format(datetime.datetime.combine(datetime.date.min, end) - datetime.datetime.combine(datetime.date.min, start)))
     return temp_output
 # ------------------------------------------------------
 
@@ -480,7 +480,7 @@ def main():
     existing_database = False
     reference_kmer_dict = None
     if database != None and Path(database).is_file():
-        with open(database, 'rb') as database_handle:
+        with gzip.open(database, 'rb') as database_handle:
             reference_kmer_dict = pickle.load(database_handle)
         if isinstance(reference_kmer_dict,dict):
             existing_database = True
@@ -698,17 +698,17 @@ def main():
             del kmer_results
     # ------------------------------------------------------
     
-    # Create or update database
+    # Create or update database and compress it
     # ------------------------------------------------------
     if database != None and existing_database == True and update == True:
         print("Updating database with new query genome information...", end="")
         updated_database = merge_dicts([query_kmer_dict, reference_kmer_dict])
-        with open(database, 'wb') as database_handle:
+        with gzip.open(database, 'wb') as database_handle:
             pickle.dump(updated_database, database_handle, protocol=4)
         print("Done!")
     elif database != None and existing_database == False:
         print("Creating database with reference genome information...", end="")
-        with open(database, 'wb') as database_handle:
+        with gzip.open(database, 'wb') as database_handle:
             if same_genomes == True:
                 pickle.dump(query_kmer_dict, database_handle, protocol=4)
             else:
