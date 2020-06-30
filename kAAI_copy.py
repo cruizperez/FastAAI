@@ -488,7 +488,8 @@ def main():
             exit("The database appears to have the wrong format. Please provide a correctly formated database.")
     elif database != None and not Path(database).is_file():
         print("Database {} will be created".format(database))
-    
+    if references != None and existing_database == True and update == False:
+        print("You provided a reference list file and a existing database. I will use the database as references and ignore the reference file.")
     # ------------------------------------------------------
 
     # Get files from the query and reference lists
