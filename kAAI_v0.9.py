@@ -16,13 +16,12 @@ or Diamond) and the hAAI implemented in MiGA.
 ################################################################################
 """---0.0 Import Modules---"""
 import subprocess, argparse, multiprocessing, datetime, shutil
-from numpy import random
+import textwrap, pickle, gzip
+from random import randint
 from pathlib import Path
 from sys import argv
 from sys import exit
 from functools import partial
-import sys, textwrap, time, pickle, gzip
-
 
 
 ################################################################################
@@ -153,7 +152,7 @@ def hmm_filter(scg_hmm_file, keep):
                     elif score < hmm_hit_dict[protein_name][0]:
                         continue
                     else:
-                        if random.randint(2) > 0:
+                        if randint(2) > 0:
                             hmm_hit_dict[protein_name] = [score, line]
                 else:
                     hmm_hit_dict[protein_name] = [score, line]
@@ -206,14 +205,30 @@ def kmer_extract(input_files):
 # --- Extract kmers from protein sequences ---
 # ------------------------------------------------------
 def read_kmers_from_file(filename, positive_hits, ksize):
-    from Bio.SeqIO.FastaIO import SimpleFastaParser
     scg_kmers = {}
-    with open(filename) as Fasta_in:
-        for title, sequence in SimpleFastaParser(Fasta_in):
-            protein = title.split()[0]
-            if protein in positive_hits:
-                kmers = build_kmers(sequence, ksize)
-                scg_kmers[protein] = kmers
+    store_sequence = False
+    protein_name = ""
+    protein_sequence = ""
+    with open(filename) as fasta_in:
+        for line in fasta_in:
+            if line.startswith(">"):
+                if store_sequence == True:
+                    kmers = build_kmers(protein_sequence, ksize)
+                    scg_kmers[protein_name] = kmers
+                protein_sequence = ""
+                store_sequence = False
+                line = line.replace(">", "")
+                protein_name = line.strip().split()[0]
+                if protein_name in positive_hits:
+                    store_sequence = True
+            else:
+                if store_sequence == True:
+                    protein_sequence += line.strip()
+                else:
+                    continue
+            if store_sequence == True:
+                kmers = build_kmers(protein_sequence, ksize)
+                scg_kmers[protein_name] = kmers
     return scg_kmers
 # ------------------------------------------------------
 
@@ -251,7 +266,6 @@ def single_kaai_parser(query_id):
     # Start comparison with all genomes in the query dictionary
     with open(temp_output, 'w') as out_file:
         for target_genome, scg_ids in query_kmer_dictionary.items():
-            #start = datetime.datetime.now().time()
             jaccard_similarities = []
             # Get number and list of SCG detected in reference
             target_num_scg = len(scg_ids)
@@ -280,8 +294,7 @@ def single_kaai_parser(query_id):
             except:
                 out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
                            "NA", "NA", "NA"))
-            #end = datetime.datetime.now().time()
-            #print("Comparison time: {}".format(datetime.datetime.combine(datetime.date.min, end) - datetime.datetime.combine(datetime.date.min, start)))
+
     return temp_output
 # ------------------------------------------------------
 
@@ -306,7 +319,6 @@ def double_kaai_parser(query_id):
     # Start comparison with all genomes in the query dictionary
     with open(temp_output, 'w') as out_file:
         for target_genome, scg_ids in ref_kmer_dictionary.items():
-            #start = datetime.datetime.now().time()
             jaccard_similarities = []
             # Get number and list of SCG detected in reference
             target_num_scg = len(scg_ids)
@@ -335,8 +347,6 @@ def double_kaai_parser(query_id):
             except:
                 out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
                            "NA", "NA", "NA"))
-            #end = datetime.datetime.now().time()
-            #print("Comparison time: {}".format(datetime.datetime.combine(datetime.date.min, end) - datetime.datetime.combine(datetime.date.min, start)))
     return temp_output
 # ------------------------------------------------------
 
@@ -641,11 +651,9 @@ def main():
     # Filter HMM results, retaining best hit per protein
     # ------------------------------------------------------
     print("Filtering HMM results...", end="")
-    print(datetime.datetime.now()) #! Remove after testing
     # Filter query HMM search results
     try:
         pool = multiprocessing.Pool(threads)
-        #query_filtered_hmms = pool.map(partial(hmm_filter, keep=keep), query_hmm_results)
         pool.map(partial(hmm_filter, keep=keep), query_hmm_results)
     finally:
         pool.close()
@@ -658,7 +666,6 @@ def main():
             try:
                 pool = multiprocessing.Pool(threads)
                 pool.map(partial(hmm_filter, keep=keep), reference_hmm_results)
-                #reference_filtered_hmms = pool.map(partial(hmm_filter, keep=keep), reference_hmm_results)
             finally:
                 pool.close()
                 pool.join()
