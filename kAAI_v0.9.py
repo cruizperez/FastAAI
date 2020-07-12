@@ -267,6 +267,8 @@ def single_kaai_parser(query_id):
     with open(temp_output, 'w') as out_file:
         for target_genome, scg_ids in query_kmer_dictionary.items():
             jaccard_similarities = []
+            all_unions = 0
+            all_intersections = 0
             # Get number and list of SCG detected in reference
             target_num_scg = len(scg_ids)
             target_scg_list = scg_ids.keys()
@@ -283,17 +285,20 @@ def single_kaai_parser(query_id):
                     kmers_target = query_kmer_dictionary[target_genome][accession].split(',')
                     # Calculate jaccard_similarity
                     intersection = len(kmers_query.intersection(kmers_target))
+                    all_intersections += len(kmers_query.intersection(kmers_target))
+                    all_unions += len(kmers_query.union(kmers_target))
                     union = len(kmers_query.union(kmers_target))
                     jaccard_similarities.append(intersection / union)
                 else:
                     continue
             try:
-                out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                #! Added a new field for weighted average
+                out_file.write("{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
                            round(sum(jaccard_similarities)/len(jaccard_similarities), 4),
-                           len(jaccard_similarities), len(final_scg_list)))
+                           len(jaccard_similarities), len(final_scg_list), (all_intersections/all_unions)))
             except:
-                out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
-                           "NA", "NA", "NA"))
+                out_file.write("{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                           "NA", "NA", "NA", "NA"))
 
     return temp_output
 # ------------------------------------------------------
@@ -413,6 +418,8 @@ def main():
                                     a list of protein files for the query and the references.
                                     (in the same order).
                                     '''))
+    mandatory_options.add_argument('-i', '--index', dest='index', action='store_true', required=False, 
+                                    help="Start from indexed database files")
     mandatory_options.add_argument('-o', '--output', dest='outfile', action='store', required=True, help='Output File')
     additional_input_options = parser.add_argument_group('Additional input options.')
     additional_input_options.add_argument('-d', '--database', dest='database', action='store', required=False, 
