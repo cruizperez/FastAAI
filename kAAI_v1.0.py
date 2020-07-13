@@ -397,63 +397,59 @@ def main():
             '''Usage: ''' + argv[0] + ''' -p [Protein Files] -t [Threads] -o [Output]\n'''
             '''Global mandatory parameters: -g [Genome Files] OR -p [Protein Files] OR -s [SCG HMM Results] -o [AAI Table Output]\n'''
             '''Optional Database Parameters: See ''' + argv[0] + ' -h')
-    mandatory_options = parser.add_argument_group('Mandatory i/o options.')
-    mandatory_options.add_argument('-q', '--queries', dest='queries', action='store', required=True,
-                                    help='File with list of queries.')
-    mandatory_options.add_argument('-r', '--references', dest='references', action='store', required=False,
-                                    help='File with list of references. Not required if using an existing database "-d".')
-    mandatory_options.add_argument('-g', '--genomes', dest='genomes', action='store_true', required=False,
-                                    help='Start from genome files.')
-    mandatory_options.add_argument('-p', '--proteins', dest='proteins', action='store_true', required=False,
-                                    help='Start from protein files.')
-    mandatory_options.add_argument('-s', '--hmms', dest='hmms', action='store_true', required=False, 
+    mandatory_options = parser.add_argument_group('Mandatory i/o options. You must select an input for the queries and one for the references.')
+    mandatory_options.add_argument('--qg', dest='query_genomes', action='store', required=False,
+                                    help='File with list of query genomes.')
+    mandatory_options.add_argument('--rg', dest='reference_genomes', action='store', required=False,
+                                    help='File with list of reference genomes.')
+    mandatory_options.add_argument('--qp', dest='query_proteins', action='store', required=False,
+                                    help='File with list of query proteins.')
+    mandatory_options.add_argument('--rp', dest='reference_proteins', action='store', required=False,
+                                    help='File with list of reference proteins.')
+    mandatory_options.add_argument('--qh', dest='query_hmms', action='store', required=False,
                                     help=textwrap.dedent('''
-                                    Start from HMM search result files.
-                                    If you select this option you must also provide two files with 
-                                    a list of protein files for the query and the references.
-                                    (in the same order).
+                                    File with list of pre-computed query hmmsearch results.
+                                    If you select this option you must also provide a file with 
+                                    a list of protein files for the queries (with --qp).
                                     '''))
-    mandatory_options.add_argument('-i', '--index', dest='index', action='store_true', required=False, 
-                                    help="Start from indexed database files")
-    mandatory_options.add_argument('-o', '--output', dest='outfile', action='store', required=True, help='Output File')
-    additional_input_options = parser.add_argument_group('Additional input options.')
-    additional_input_options.add_argument('-d', '--database', dest='database', action='store', required=False, 
-                                            help='Database to use for reference.')
-    additional_input_options.add_argument('-u', '--update', dest='update', action='store_true', required=False, 
-                                            help='Update database by adding new comparisons (overwrites previous database).')
+    mandatory_options.add_argument('--rh', dest='reference_hmms', action='store', required=False,
+                                    help=textwrap.dedent('''
+                                    File with list of pre-computed reference hmmsearch results.
+                                    If you select this option you must also provide a file with 
+                                    a list of protein files for the references (with --qp).
+                                    '''))
+    mandatory_options.add_argument('--qd', dest='query_database', action='store', required=False,
+                                    help='File with pre-indexed query database.')
+    mandatory_options.add_argument('--rd', dest='reference_database', action='store', required=False,
+                                    help='File with pre-indexed reference database.')
+    mandatory_options.add_argument('-o', '--output', dest='outfile', action='store', required=True, help='Output file')
+    additional_input_options = parser.add_argument_group('Behavior modification options.')
     additional_input_options.add_argument('-e', '--ext', dest='extension', action='store', required=False, 
                                             help='Extension to remove from original filename, e.g. ".fasta"')
-    additional_input_options.add_argument('--prot_query', dest='proteins_query', action='store', required=False,
-                                            help=textwrap.dedent('''
-                                            File with the list of proteins for the queries (same order as queries).
-                                            Only required if starting from hmmsearch results (-s).
-                                            '''))
-    additional_input_options.add_argument('--prot_ref', dest='proteins_reference', action='store', required=False,
-                                            help=textwrap.dedent('''
-                                            File with the list of proteins for the references (same order as references).
-                                            Only required if starting from hmmsearch results (-s).
-                                            '''))
+    additional_input_options.add_argument('-i', '--index', dest='index', action='store_true', required=False, 
+                                            help='Only index and store databases, i.e., do not perform comparisons.')
     misc_options = parser.add_argument_group('Miscellaneous options')
-    misc_options.add_argument('-t', '--threads', dest='threads', action='store', default=1, type=int, required=False, help='Number of threads to use, by default 1')
-    misc_options.add_argument('-k', '--keep', dest='keep', action='store_false', required=False, help='Keep intermediate files, by default true')
+    misc_options.add_argument('-t', '--threads', dest='threads', action='store', default=1, type=int, required=False,
+                                help='Number of threads to use, by default 1')
+    misc_options.add_argument('-k', '--keep', dest='keep', action='store_false', required=False,
+                                help='Keep intermediate files, by default true')
 
     args = parser.parse_args()
 
-    queries = args.queries
-    references = args.references
-    genomes = args.genomes
-    proteins = args.proteins
-    hmms = args.hmms
-    outfile = args.outfile
-    database = args.database
-    update = args.update
+    query_genomes = args.query_genomes
+    reference_genomes = args.reference_genomes
+    query_proteins = args.query_proteins
+    reference_proteins = args.reference_proteins
+    query_hmms = args.query_hmms
+    reference_hmms = args.reference_hmms
+    query_database = args.query_database
+    reference_database = args.reference_database
     extension = args.extension
-    proteins_query = args.proteins_query
-    proteins_reference = args.proteins_reference
+    index = args.index
     threads = args.threads
     keep = args.keep
 
-    print("kAAI started on {}".format(datetime.datetime.now())) # Remove after testing
+    print("kAAI started on {}".format(datetime.datetime.now()))
     # Check user input
     # ------------------------------------------------------
     if queries == None:
