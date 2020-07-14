@@ -43,7 +43,7 @@ def run_prodigal(input_file):
     filename = file_path.name
     folder = file_path.parent
     protein_output = folder / (filename + '.faa')
-    output_11 = folder / (filename + '.faa11')
+    output_11 = folder / (filename + '.faa.11')
     temp_output = folder / (filename + '.temp')
     subprocess.call(["prodigal", "-i", str(file_path), "-a", str(output_11), 
                     "-p", "meta", "-q", "-o", str(temp_output)])
@@ -397,36 +397,36 @@ def main():
             '''Usage: ''' + argv[0] + ''' -p [Protein Files] -t [Threads] -o [Output]\n'''
             '''Global mandatory parameters: -g [Genome Files] OR -p [Protein Files] OR -s [SCG HMM Results] -o [AAI Table Output]\n'''
             '''Optional Database Parameters: See ''' + argv[0] + ' -h')
-    mandatory_options = parser.add_argument_group('Mandatory i/o options. You must select an input for the queries and one for the references.')
+    mandatory_options = parser.add_argument_group('Mandatory i/o options. You must select an option for the queries and one for the references.')
     mandatory_options.add_argument('--qg', dest='query_genomes', action='store', required=False,
                                     help='File with list of query genomes.')
-    mandatory_options.add_argument('--rg', dest='reference_genomes', action='store', required=False,
-                                    help='File with list of reference genomes.')
     mandatory_options.add_argument('--qp', dest='query_proteins', action='store', required=False,
                                     help='File with list of query proteins.')
-    mandatory_options.add_argument('--rp', dest='reference_proteins', action='store', required=False,
-                                    help='File with list of reference proteins.')
     mandatory_options.add_argument('--qh', dest='query_hmms', action='store', required=False,
                                     help=textwrap.dedent('''
                                     File with list of pre-computed query hmmsearch results.
                                     If you select this option you must also provide a file with 
                                     a list of protein files for the queries (with --qp).
                                     '''))
+    mandatory_options.add_argument('--qd', dest='query_database', action='store', required=False,
+                                    help='File with pre-indexed query database.')
+    mandatory_options.add_argument('--rg', dest='reference_genomes', action='store', required=False,
+                                    help='File with list of reference genomes.')
+    mandatory_options.add_argument('--rp', dest='reference_proteins', action='store', required=False,
+                                    help='File with list of reference proteins.')
     mandatory_options.add_argument('--rh', dest='reference_hmms', action='store', required=False,
                                     help=textwrap.dedent('''
                                     File with list of pre-computed reference hmmsearch results.
                                     If you select this option you must also provide a file with 
                                     a list of protein files for the references (with --qp).
                                     '''))
-    mandatory_options.add_argument('--qd', dest='query_database', action='store', required=False,
-                                    help='File with pre-indexed query database.')
     mandatory_options.add_argument('--rd', dest='reference_database', action='store', required=False,
                                     help='File with pre-indexed reference database.')
-    mandatory_options.add_argument('-o', '--output', dest='outfile', action='store', required=True, help='Output file')
+    mandatory_options.add_argument('-o', '--output', dest='output', action='store', required=True, help='Output file')
     additional_input_options = parser.add_argument_group('Behavior modification options.')
     additional_input_options.add_argument('-e', '--ext', dest='extension', action='store', required=False, 
                                             help='Extension to remove from original filename, e.g. ".fasta"')
-    additional_input_options.add_argument('-i', '--index', dest='index', action='store_true', required=False, 
+    additional_input_options.add_argument('-i', '--index', dest='index_db', action='store_true', required=False, 
                                             help='Only index and store databases, i.e., do not perform comparisons.')
     misc_options = parser.add_argument_group('Miscellaneous options')
     misc_options.add_argument('-t', '--threads', dest='threads', action='store', default=1, type=int, required=False,
@@ -444,318 +444,340 @@ def main():
     reference_hmms = args.reference_hmms
     query_database = args.query_database
     reference_database = args.reference_database
+    output = args.output
     extension = args.extension
-    index = args.index
+    index_db = args.index_db
     threads = args.threads
     keep = args.keep
 
     print("kAAI started on {}".format(datetime.datetime.now()))
     # Check user input
     # ------------------------------------------------------
-    if queries == None:
-        exit('Please prove a query and reference list files (or database to use as reference).')
-    if references == None:
-        if database == None:
-            exit('Please prove a query and reference list files (or database to use as reference).')
-        elif Path(database).is_file() and update == True:
-            print("I will update the current database {} with information from the new genomes.")
-        elif Path(database).is_file() and update == False:
-            print("I will use {} as database for the comparisons.".format(database))
-        else:
-            exit('The database you provided does not exist. Please also provide the reference file to populate it.')
-    if (genomes + proteins + hmms) > 1 or (genomes + proteins + hmms) == 0:
-        exit('Please specify if the program should start from genomes (-g), proteins (-p) OR hmm search results (-s)')
-    if hmms == True:
-        if proteins_query == None:
-            print("You chose to start from hmmsearch results (-s).")
-            print("However, I also need the location of the proteins from the queries previously used for hmmsearch.")
-            exit("Please provide them with --prot_query.")
-        if proteins_reference == None:
-            if database == None:
-                print("You chose to start from hmmsearch results (-s).")
-                print("However, I also need the location of the reference proteins previously used for hmmsearch.")
-                exit("Please provide them with --prot_ref.")
-            elif database != None and not Path(database).is_file():
-                print("You chose to start from hmmsearch results (-s).")
-                print("However, I also need the location of the reference proteins previously used for hmmsearch.")
-                exit("Please provide them with --prot_ref.")
-            else:
-                print("I will use {} as database for the comparisons.".format(database))
+    # Check if no query was provided
+    if query_genomes == None and query_proteins == None and query_hmms == None and query_database == None:
+        exit('Please prove a file with a list of queries, e.g., --qg, --qp, --qh, or --qd)')
+    # Check query inputs
+    query_input = None
+    if query_hmms != None:
+        query_input = query_hmms
+        if query_proteins != None:
+            print("Starting from query hmmsearch results.")
+            print("You also provided the list of protein files used for hmmsearch.")
+        elif query_proteins == None:
+            print("You chose to start from pre-computed hmmsearch results for your queries (--qh).")
+            print("However, I also need the location of the query proteins used for hmmsearch.")
+            exit("Please provide them with --qp.")
+    elif query_proteins != None:
+        query_input = query_proteins
+        print("Starting from query proteins.")
+    elif query_genomes != None:
+        query_input = query_genomes
+        print("Starting from query genomes.")
+    elif query_database != None:
+        print("Starting from the pre-indexed query database.")
+    # Check if no reference was provided
+    if reference_genomes == None and reference_proteins == None and reference_hmms == None and reference_database == None:
+        exit('Please prove a file with a list of references, e.g., --rg, --rp, --rh, or --rd)')
+    # Check reference inputs
+    reference_input = None
+    if reference_hmms != None:
+        reference_input = reference_hmms
+        if reference_proteins != None:
+            print("Starting from reference hmmsearch results.")
+            print("You also provided the list of protein files used for hmmsearch.")
+        elif reference_proteins == None:
+            print("You chose to start from pre-computed hmmsearch results for your references (--rh).")
+            print("However, I also need the location of the query proteins used for hmmsearch.")
+            exit("Please provide them with --rp.")
+    elif reference_proteins != None:
+        reference_input = reference_proteins
+        print("Starting from reference proteins.")
+    elif reference_genomes != None:
+        reference_input = reference_genomes
+        print("Starting from reference genomes.")
+    elif reference_database != None:
+        print("Starting from the pre-indexed reference database.")
     # ------------------------------------------------------
 
-    # Read database in and determine if it is a valid database
+    # Check if queries are the same as references (an all-vs-all comparison)
     # ------------------------------------------------------
-    existing_database = False
-    reference_kmer_dict = None
-    if database != None and Path(database).is_file():
-        with gzip.open(database, 'rb') as database_handle:
-            reference_kmer_dict = pickle.load(database_handle)
-        if isinstance(reference_kmer_dict,dict):
-            existing_database = True
-        else:
-            exit("The database appears to have the wrong format. Please provide a correctly formated database.")
-    elif database != None and not Path(database).is_file():
-        print("Database {} will be created".format(database))
-    if references != None and existing_database == True and update == False:
-        print("You provided a reference list file and a existing database. I will use the database as references and ignore the reference file.")
-    # ------------------------------------------------------
-
-    # Get files from the query and reference lists
-    # ------------------------------------------------------
-    same_genomes = False
-    if queries == references:
-        same_genomes = True
+    same_inputs = False
+    if query_input == reference_input:
+        same_inputs = True
+    if same_inputs == True:
         print('You specified the same query and reference files.')
         print('I will perform an all vs all comparison :)')
-    query_list = []
-    reference_list = []
-    query_proteins = []
-    reference_proteins = []
-    with open(queries, 'r') as query_file:
-        for line in query_file:
-            query_list.append(line.strip())
-    if hmms == True:
-        with open(proteins_query, 'r') as prot_seq_query:
-            for line in prot_seq_query:
-                query_proteins.append(line.strip())
-    if same_genomes == False:
-        if existing_database == True:
-            pass
-        else:
-            with open(references, 'r') as reference_file:
-                for line in reference_file:
-                    reference_list.append(line.strip())
-            if hmms == True:
-                with open(proteins_reference, 'r') as prot_seq_ref:
-                    for line in prot_seq_ref:
-                        reference_proteins.append(line.strip())
-    
     # ------------------------------------------------------
 
-    # Create a dictionary with resulting filenames and a list with dictionary keys
+    # If using pre-indexed databases, check if they are valid files.
     # ------------------------------------------------------
-    query_file_names = {}
-    reference_file_names = {}
-    query_key_names = []
-    reference_key_names = []
-    for index, query in enumerate(query_list):
-        query_name = str(Path(query).name)
-        # Add final name to query list
-        if extension != None:
-            query_name = query_name.replace(extension, "")
-            query_key_names.append(query_name)
+    # If any of the starting points is from database, then store the
+    # kmer structures in the corresponding dictionaries.
+    # Otherwise get read the file list and get the filenames
+    query_kmer_dict = None
+    reference_kmer_dict = None
+    # If starting from database and query == reference
+    if query_database != None and same_inputs == True:
+        if Path(query_database).is_file():
+            with gzip.open(query_database, 'rb') as database_handle:
+                query_kmer_dict = pickle.load(database_handle)
+            if isinstance(query_kmer_dict,dict):
+                pass
+            else:
+                exit("The database appears to have the wrong format. Please provide a correctly formated database.")
+    # If starting from database and query != reference
+    elif query_database != None and reference_database == None:
+        # First check database
+        if Path(query_database).is_file():
+            with gzip.open(query_database, 'rb') as database_handle:
+                query_kmer_dict = pickle.load(database_handle)
+            if isinstance(query_kmer_dict,dict):
+                pass
+            else:
+                exit("The query database appears to have the wrong format. Please provide a correctly formated database.")
         else:
-            query_key_names.append(query_name)
-        if genomes == True:
-            query_file_names[query_name] = [query, query + '.faa', query + '.faa.hmm', query + '.faa.hmm.filt']
-        elif proteins == True:
-            query_file_names[query_name] = [None, query, query + '.hmm', query + '.hmm.filt']
-        elif hmms == True:
-            query_file_names[query_name] = [None, query_proteins[index], query, query + '.filt']
-    if same_genomes == False:
-        if existing_database == True:
+            exit("I cannot locate the query database you proveded: {}". format(query_database))
+    elif reference_database != None:
+        if Path(reference_database).is_file():
+            with gzip.open(reference_database, 'rb') as database_handle:
+                reference_kmer_dict = pickle.load(database_handle)
+            if isinstance(reference_kmer_dict,dict):
+                pass
+            else:
+                exit("The reference database appears to have the wrong format. Please provide a correctly formated database.")
+    # ------------------------------------------------------
+
+    # Get files from the query and reference lists and then
+    # create a dictionary with resulting filenames and a list with dictionary keys
+    # The structure of the dictionary is:
+    # original_query, proteins, hmms, filtered_hmms
+    # ------------------------------------------------------
+    # First parse the query:
+    query_list = []
+    query_file_names = {}
+    if query_database != None:
+        pass
+    else:
+        with open(query_input, 'r') as query_input_fh:
+            for line in query_input_fh:
+                query_list.append(line.strip())
+        for index, query in enumerate(query_list):
+            query_name = str(Path(query).name)
+            if extension != None:
+                query_name = query_name.replace(extension, "")
+            if query_hmms != None:
+                query_protein_list = []
+                with open(query_proteins, 'r') as query_protein_fh:
+                    for line in query_protein_fh:
+                        query_protein_list.append(line.strip())
+                query_file_names[query_name] = [None, query_protein_list[index], query, query + '.filt']
+            elif query_proteins != None:
+                query_file_names[query_name] = [None, query, query + '.hmm', query + '.hmm.filt']
+            elif query_genomes != None:
+                query_file_names[query_name] = [query, query + '.faa', query + '.faa.hmm', query + '.faa.hmm.filt']
+    # Then parse the references:
+    reference_list = []
+    reference_file_names = {}
+    if same_inputs == True:
+        pass
+    else:
+        if reference_database != None:
             pass
         else:
+            with open(reference_input, 'r') as reference_input_fh:
+                for line in reference_input_fh:
+                    reference_list.append(line.strip())
             for index, reference in enumerate(reference_list):
                 reference_name = str(Path(reference).name)
-                # Add final name to query list
                 if extension != None:
                     reference_name = reference_name.replace(extension, "")
-                    reference_key_names.append(reference_name)
-                else:
-                    reference_key_names.append(reference_name)
-                if genomes == True:
-                    reference_file_names[reference_name] = [reference, reference + '.faa', reference + '.faa.hmm', reference + '.faa.hmm.filt']
-                elif proteins == True:
+                if reference_hmms != None:
+                    reference_protein_list = []
+                    with open(reference_proteins, 'r') as reference_protein_fh:
+                        for line in reference_protein_fh:
+                            reference_protein_list.append(line.strip())
+                    reference_file_names[reference_name] = [None, reference_protein_list[index], reference, reference + '.filt']
+                elif reference_proteins != None:
                     reference_file_names[reference_name] = [None, reference, reference + '.hmm', reference + '.hmm.filt']
-                elif hmms == True:
-                    reference_file_names[reference_name] = [None, reference_proteins[index], reference, reference + '.filt']
+                elif query_genomes != None:
+                    reference_file_names[reference_name] = [reference, reference + '.faa', reference + '.faa.hmm', reference + '.faa.hmm.filt']
     # ------------------------------------------------------
 
-    # Predict proteins and perform HMM searches
+    # Pre-index and store databases
     # ------------------------------------------------------
-    if genomes == True:
-        print("Starting from genome files.")
-        print("Predicting proteins...   ", end="")
-        # Predict query proteins 
-        try:
-            pool = multiprocessing.Pool(threads)
-            query_protein_files = pool.map(run_prodigal, query_list)
-        finally:
-            pool.close()
-            pool.join()
-        # Predict reference proteins
-        if same_genomes == False:
-            if existing_database == True:
-                pass
-            else:
-                try:
-                    pool = multiprocessing.Pool(threads)
-                    reference_protein_files = pool.map(run_prodigal, reference_list)
-                finally:
-                    pool.close()
-                    pool.join()
-        print("Done")
-        print("Searching against HMM models...   ", end="")
-        # Search queries agains HMM SCG models
-        try:
-            pool = multiprocessing.Pool(threads)
-            query_hmm_results = pool.map(run_hmmsearch, query_protein_files)
-        finally:
-            pool.close()
-            pool.join()
-        # Search references agains HMM SCG models
-        if same_genomes == False:
-            if existing_database == True:
-                pass
-            else:
-                try:
-                    pool = multiprocessing.Pool(threads)
-                    reference_hmm_results = pool.map(run_hmmsearch, reference_protein_files)
-                finally:
-                    pool.close()
-                    pool.join()
-        print("Done")
-    elif proteins == True:
-        query_protein_files = query_list
-        reference_protein_files = reference_list
-        print("Starting from protein files.")
-        print("Searching against HMM models...   ", end="")
-        # Search queries against HMM models
-        try:
-            pool = multiprocessing.Pool(threads)
-            query_hmm_results = pool.map(run_hmmsearch, query_protein_files)
-        finally:
-            pool.close()
-            pool.join()
-        # Search references against HMM models
-        if same_genomes == False:
-            if existing_database == True:
-                pass
-            else:
-                try:
-                    pool = multiprocessing.Pool(threads)
-                    reference_hmm_results = pool.map(run_hmmsearch, reference_protein_files)
-                finally:
-                    pool.close()
-                    pool.join()
-        print("Done")
-    elif hmms == True:
-        print("Starting from HMM searches.")
-        query_hmm_results = query_list
-        reference_hmm_results = reference_list
-    # ------------------------------------------------------
-    
-    # Filter HMM results, retaining best hit per protein
-    # ------------------------------------------------------
-    print("Filtering HMM results...", end="")
-    # Filter query HMM search results
-    try:
-        pool = multiprocessing.Pool(threads)
-        pool.map(partial(hmm_filter, keep=keep), query_hmm_results)
-    finally:
-        pool.close()
-        pool.join()
-    # Filter reference HMM search results
-    if same_genomes == False:
-        if existing_database == True:
-            pass
-        else:
+    # Pre-index queries
+    if query_kmer_dict == None:
+        print("Processing queries...")
+        if query_hmms != None:
+            query_hmm_results = query_list
+        elif query_proteins != None:
+            query_protein_files = query_list
+            print("Searching against HMM models...")
             try:
                 pool = multiprocessing.Pool(threads)
-                pool.map(partial(hmm_filter, keep=keep), reference_hmm_results)
+                query_hmm_results = pool.map(run_hmmsearch, query_protein_files)
             finally:
                 pool.close()
                 pool.join()
-    print('Done')
-
-    # ------------------------------------------------------
-
-    # Find kmers per SCG per genome
-    # ------------------------------------------------------
-    print("Parsing HMM results...")
-    # Finding kmers for all queries
-    query_information = []
-    for name, values in query_file_names.items():
-        query_information.append((name, values[1], values[3]))
-    try:
-        pool = multiprocessing.Pool(threads)
-        kmer_results = pool.map(kmer_extract, query_information)
-    finally:
-        pool.close()
-        pool.join()
-    query_kmer_dict = merge_dicts(kmer_results)
-    del kmer_results
-    # Finding kmers for all references
-    if same_genomes == False:
-        if existing_database == True:
-            pass
-        else:
-            reference_information = []
-            for name, values in reference_file_names.items():
-                reference_information.append((name, values[1], values[3]))
+        if query_genomes != None:
+            print("Predicting proteins...")
+            # Predict query proteins 
             try:
                 pool = multiprocessing.Pool(threads)
-                kmer_results = pool.map(kmer_extract, reference_information)
+                query_protein_files = pool.map(run_prodigal, query_list)
             finally:
                 pool.close()
                 pool.join()
-            reference_kmer_dict = merge_dicts(kmer_results)
-            del kmer_results
+            print("Done!")
+            print("Searching against HMM models...")
+            # Run hmmsearch against proteins predicted
+            try:
+                pool = multiprocessing.Pool(threads)
+                query_hmm_results = pool.map(run_hmmsearch, query_protein_files)
+            finally:
+                pool.close()
+                pool.join()
+            print("Done!")
+        print("Filtering query hmmsearch results...")
+        # Filter query HMM search results
+        try:
+            pool = multiprocessing.Pool(threads)
+            pool.map(partial(hmm_filter, keep=keep), query_hmm_results)
+        finally:
+            pool.close()
+            pool.join()
+        print("Extracting kmers from query proteins...")
+        # Finding kmers for all queries
+        query_information = []
+        for name, values in query_file_names.items():
+            query_information.append((name, values[1], values[3]))
+        try:
+            pool = multiprocessing.Pool(threads)
+            kmer_results = pool.map(kmer_extract, query_information)
+        finally:
+            pool.close()
+            pool.join()
+        query_kmer_dict = merge_dicts(kmer_results)
+        del kmer_results
+    # Pre-index references (if different from queries)
+    if same_inputs == False and reference_kmer_dict == None:
+        print("Processing references...")
+        if reference_hmms != None:
+            reference_hmm_results = reference_list
+        elif reference_proteins != None:
+            reference_protein_files = reference_list
+            print("Searching against HMM models...   ")
+            try:
+                pool = multiprocessing.Pool(threads)
+                reference_hmm_results = pool.map(run_hmmsearch, reference_protein_files)
+            finally:
+                pool.close()
+                pool.join()
+        if reference_genomes != None:
+            print("Predicting proteins...")
+            # Predict reference proteins 
+            try:
+                pool = multiprocessing.Pool(threads)
+                reference_protein_files = pool.map(run_prodigal, reference_list)
+            finally:
+                pool.close()
+                pool.join()
+            print("Done!")
+            print("Searching against HMM models...")
+            # Run hmmsearch against proteins predicted
+            try:
+                pool = multiprocessing.Pool(threads)
+                reference_hmm_results = pool.map(run_hmmsearch, reference_protein_files)
+            finally:
+                pool.close()
+                pool.join()
+            print("Done!")
+        print("Filtering reference hmmsearch results...")
+        # Filter reference HMM search results
+        try:
+            pool = multiprocessing.Pool(threads)
+            pool.map(partial(hmm_filter, keep=keep), reference_hmm_results)
+        finally:
+            pool.close()
+            pool.join()
+        print("Extracting kmers from reference proteins...")
+        # Finding kmers for all queries
+        reference_information = []
+        for name, values in reference_file_names.items():
+            reference_information.append((name, values[1], values[3]))
+        try:
+            pool = multiprocessing.Pool(threads)
+            kmer_results = pool.map(kmer_extract, reference_information)
+        finally:
+            pool.close()
+            pool.join()
+        reference_kmer_dict = merge_dicts(kmer_results)
+        del kmer_results
     # ------------------------------------------------------
     
-    # Create or update database and compress it
+    # Create or database(s) and compress it(them)
     # ------------------------------------------------------
-    if database != None and existing_database == True and update == True:
-        print("Updating database with new query genome information...", end="")
-        updated_database = merge_dicts([query_kmer_dict, reference_kmer_dict])
-        with gzip.open(database, 'wb') as database_handle:
-            pickle.dump(updated_database, database_handle, protocol=4)
-        print("Done!")
-    elif database != None and existing_database == False:
-        print("Creating database with reference genome information...", end="")
-        with gzip.open(database, 'wb') as database_handle:
-            if same_genomes == True:
-                pickle.dump(query_kmer_dict, database_handle, protocol=4)
-            else:
-                pickle.dump(reference_kmer_dict, database_handle, protocol=4)
-        print("Done!")
-        
+    if same_inputs == True and query_database == None:
+        print("Saving pre-indexed database...")
+        query_database_name = query_input + '.db.gz'
+        with gzip.open(query_database_name, 'wb') as database_handle:
+            pickle.dump(query_kmer_dict, database_handle, protocol=4)
+    if same_inputs == False and query_database == None and reference_database == None:
+        print("Saving pre-indexed databases...")
+        query_database_name = query_input + '.db.gz'
+        reference_database_name = reference_input + '.db.gz'
+        with gzip.open(query_database_name, 'wb') as database_handle:
+            pickle.dump(query_kmer_dict, database_handle, protocol=4)
+        with gzip.open(reference_database_name, 'wb') as database_handle:
+            pickle.dump(reference_kmer_dict, database_handle, protocol=4)
+    elif same_inputs == False and query_database == None:
+        print("Saving pre-indexed query database...")
+        query_database_name = query_input + '.db.gz'
+        with gzip.open(query_database_name, 'wb') as database_handle:
+            pickle.dump(query_kmer_dict, database_handle, protocol=4)
+    elif same_inputs == False and reference_database == None:
+        print("Saving pre-indexed reference database...")
+        reference_database_name = reference_input + '.db.gz'
+        with gzip.open(reference_database_name, 'wb') as database_handle:
+            pickle.dump(reference_kmer_dict, database_handle, protocol=4)
+    print("Done!")
     # ------------------------------------------------------
 
     # Calculate Jaccard distances
     # ------------------------------------------------------
-    print("Calculating shared Kmer fraction...")
-    print(datetime.datetime.now())
-    if same_genomes == True:
-        query_id_list = query_kmer_dict.keys()
-        try:
-            pool = multiprocessing.Pool(threads, initializer = single_dictionary_initializer, initargs = (query_kmer_dict,))
-            Fraction_Results = pool.map(single_kaai_parser, query_id_list)
-        finally:
-            pool.close()
-            pool.join()
+    if index_db == True:
+        print("Finished pre-indexing databases.")
+        print("Next time you can run the program using only these files with --qd and(or) --rd.")
     else:
-        query_id_list = query_kmer_dict.keys()
-        try:
-            pool = multiprocessing.Pool(threads, initializer = two_dictionary_initializer, initargs = (query_kmer_dict, reference_kmer_dict))
-            Fraction_Results = pool.map(double_kaai_parser, query_id_list)
-        finally:
-            pool.close()
-            pool.join()
+        print("Calculating shared Kmer fraction...")
+        if same_inputs == True:
+            query_id_list = query_kmer_dict.keys()
+            try:
+                pool = multiprocessing.Pool(threads, initializer = single_dictionary_initializer, initargs = (query_kmer_dict,))
+                Fraction_Results = pool.map(single_kaai_parser, query_id_list)
+            finally:
+                pool.close()
+                pool.join()
+        else:
+            query_id_list = query_kmer_dict.keys()
+            try:
+                pool = multiprocessing.Pool(threads, initializer = two_dictionary_initializer, initargs = (query_kmer_dict, reference_kmer_dict))
+                Fraction_Results = pool.map(double_kaai_parser, query_id_list)
+            finally:
+                pool.close()
+                pool.join()
 
     # ------------------------------------------------------
     
     # Merge results into a single output
     # ------------------------------------------------------
-    print("Merging results...")
-    print(datetime.datetime.now())
-    with open(outfile, 'w') as output:
-        for file in Fraction_Results:
-            with open(file) as Temp:
-                shutil.copyfileobj(Temp, output)
-            file.unlink()
-    print("kAAI finishied correctly!!")
+        print("Merging results...")
+        with open(output, 'w') as outfile:
+            for file in Fraction_Results:
+                with open(file) as Temp:
+                    shutil.copyfileobj(Temp, outfile)
+                file.unlink()
+        print("kAAI finishied correctly on {}".format(datetime.datetime.now()))
     # ------------------------------------------------------
 
 if __name__ == "__main__":
