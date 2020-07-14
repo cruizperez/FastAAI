@@ -422,7 +422,7 @@ def main():
                                     '''))
     mandatory_options.add_argument('--rd', dest='reference_database', action='store', required=False,
                                     help='File with pre-indexed reference database.')
-    mandatory_options.add_argument('-o', '--output', dest='output', action='store', required=True, help='Output file')
+    mandatory_options.add_argument('-o', '--output', dest='output', action='store', required=False, help='Output file. By default kaai_comparisons.txt')
     additional_input_options = parser.add_argument_group('Behavior modification options.')
     additional_input_options.add_argument('-e', '--ext', dest='extension', action='store', required=False, 
                                             help='Extension to remove from original filename, e.g. ".fasta"')
@@ -445,6 +445,8 @@ def main():
     query_database = args.query_database
     reference_database = args.reference_database
     output = args.output
+    if output == None:
+        output == "kaai_comparisons.txt"
     extension = args.extension
     index_db = args.index_db
     threads = args.threads
