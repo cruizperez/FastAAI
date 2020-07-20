@@ -380,8 +380,8 @@ def merge_dicts(dictionaries):
     precedence goes to key value pairs in latter dicts.
     """
     result = {}
-    for dictionary in dictionaries:
-        result.update(dictionary)
+    for kmer_dictionary in dictionaries:
+        result.update(kmer_dictionary)
     return result
 # ------------------------------------------------------
 
@@ -409,7 +409,7 @@ def main():
                                     a list of protein files for the queries (with --qp).
                                     '''))
     mandatory_options.add_argument('--qd', dest='query_database', action='store', required=False,
-                                    help='File with pre-indexed query database.')
+                                    help='File with list of pre-indexed query databases.')
     mandatory_options.add_argument('--rg', dest='reference_genomes', action='store', required=False,
                                     help='File with list of reference genomes.')
     mandatory_options.add_argument('--rp', dest='reference_proteins', action='store', required=False,
@@ -421,7 +421,7 @@ def main():
                                     a list of protein files for the references (with --qp).
                                     '''))
     mandatory_options.add_argument('--rd', dest='reference_database', action='store', required=False,
-                                    help='File with pre-indexed reference database.')
+                                    help='File with list of pre-indexed reference databases.')
     mandatory_options.add_argument('-o', '--output', dest='output', action='store', required=False, help='Output file. By default kaai_comparisons.txt')
     additional_input_options = parser.add_argument_group('Behavior modification options.')
     additional_input_options.add_argument('-e', '--ext', dest='extension', action='store', required=False, 
@@ -476,6 +476,7 @@ def main():
         query_input = query_genomes
         print("Starting from query genomes.")
     elif query_database != None:
+        query_input = query_database
         print("Starting from the pre-indexed query database.")
     # Check if no reference was provided
     if reference_genomes == None and reference_proteins == None and reference_hmms == None and reference_database == None:
@@ -498,6 +499,7 @@ def main():
         reference_input = reference_genomes
         print("Starting from reference genomes.")
     elif reference_database != None:
+        reference_input = reference_database
         print("Starting from the pre-indexed reference database.")
     # ------------------------------------------------------
 
@@ -517,36 +519,70 @@ def main():
     # kmer structures in the corresponding dictionaries.
     # Otherwise get read the file list and get the filenames
     query_kmer_dict = None
+    query_kmer_dict_list = []
     reference_kmer_dict = None
+    reference_kmer_dict_list = []
     # If starting from database and query == reference
-    if query_database != None and same_inputs == True:
-        if Path(query_database).is_file():
-            with gzip.open(query_database, 'rb') as database_handle:
-                query_kmer_dict = pickle.load(database_handle)
-            if isinstance(query_kmer_dict,dict):
-                pass
-            else:
-                exit("The database appears to have the wrong format. Please provide a correctly formated database.")
-    # If starting from database and query != reference
-    elif query_database != None and reference_database == None:
-        # First check database
-        if Path(query_database).is_file():
-            with gzip.open(query_database, 'rb') as database_handle:
-                query_kmer_dict = pickle.load(database_handle)
-            if isinstance(query_kmer_dict,dict):
-                pass
-            else:
-                exit("The query database appears to have the wrong format. Please provide a correctly formated database.")
-        else:
-            exit("I cannot locate the query database you proveded: {}". format(query_database))
-    elif reference_database != None:
-        if Path(reference_database).is_file():
-            with gzip.open(reference_database, 'rb') as database_handle:
-                reference_kmer_dict = pickle.load(database_handle)
-            if isinstance(reference_kmer_dict,dict):
-                pass
-            else:
-                exit("The reference database appears to have the wrong format. Please provide a correctly formated database.")
+    if same_inputs == True:
+        if query_database != None:
+            with open(query_database) as query_database_files:
+                for db_location in query_database_files:
+                    if Path(db_location.strip()).is_file():
+                        with gzip.open(db_location.strip(), 'rb') as database_handle:
+                            temp_dict = pickle.load(database_handle)
+                            if isinstance(temp_dict,dict):
+                                query_kmer_dict_list.append(temp_dict)
+                            else:
+                                exit("One of the database files appear to have the wrong format. Please provide a correctly formated databases.")
+            query_kmer_dict = merge_dicts(query_kmer_dict_list)
+    else:
+    # If the inputs are not the same:
+        # If query and ref are provided
+        if query_database != None and reference_database != None:
+            with open(query_database, 'r') as query_database_files:
+                for db_location in query_database_files:
+                    if Path(db_location.strip()).is_file():
+                        with gzip.open(db_location.strip(), 'rb') as database_handle:
+                            temp_dict = pickle.load(database_handle)
+                            if isinstance(temp_dict,dict):
+                                query_kmer_dict_list.append(temp_dict)
+                            else:
+                                exit("One of the query database files appear to have the wrong format. Please provide a correctly formated databases.")
+            query_kmer_dict = merge_dicts(query_kmer_dict_list)
+            with open(reference_database) as reference_database_files:
+                for db_location in reference_database_files:
+                    if Path(db_location.strip()).is_file():
+                        with gzip.open(db_location.strip(), 'rb') as database_handle:
+                            temp_dict = pickle.load(database_handle)
+                            if isinstance(temp_dict,dict):
+                                reference_kmer_dict_list.append(temp_dict)
+                            else:
+                                exit("One of the reference database files appear to have the wrong format. Please provide a correctly formated databases.")
+            reference_kmer_dict = merge_dicts(reference_kmer_dict_list)
+        # If only the query has a db
+        elif query_database != None and reference_database == None:
+            with open(query_database) as query_database_files:
+                for db_location in query_database_files:
+                    if Path(db_location.strip()).is_file():
+                        with gzip.open(db_location.strip(), 'rb') as database_handle:
+                            temp_dict = pickle.load(database_handle)
+                            if isinstance(temp_dict,dict):
+                                query_kmer_dict_list.append(temp_dict)
+                            else:
+                                exit("One of the query database files appear to have the wrong format. Please provide a correctly formated databases.")
+            query_kmer_dict = merge_dicts(query_kmer_dict_list)
+        # If only the reference has a db
+        elif query_database == None and reference_database != None:
+            with open(reference_database) as reference_database_files:
+                for db_location in reference_database_files:
+                    if Path(db_location.strip()).is_file():
+                        with gzip.open(db_location.strip(), 'rb') as database_handle:
+                            temp_dict = pickle.load(database_handle)
+                            if isinstance(temp_dict,dict):
+                                reference_kmer_dict_list.append(temp_dict)
+                            else:
+                                exit("One of the reference database files appear to have the wrong format. Please provide a correctly formated databases.")
+            reference_kmer_dict = merge_dicts(reference_kmer_dict_list)
     # ------------------------------------------------------
 
     # Get files from the query and reference lists and then
@@ -742,7 +778,6 @@ def main():
         reference_database_name = reference_input + '.db.gz'
         with gzip.open(reference_database_name, 'wb') as database_handle:
             pickle.dump(reference_kmer_dict, database_handle, protocol=4)
-    print("Done!")
     # ------------------------------------------------------
 
     # Calculate Jaccard distances
