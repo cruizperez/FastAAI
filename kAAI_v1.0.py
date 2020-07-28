@@ -288,12 +288,15 @@ def single_kaai_parser(query_id):
                 else:
                     continue
             try:
-                out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
-                           round(sum(jaccard_similarities)/len(jaccard_similarities), 4),
+                n = len(jaccard_similarities)
+                mean = sum(jaccard_similarities)/n
+                var = sum([ (x - mean)**2 for x in jaccard_similarities ])/(n - 1)
+                out_file.write("{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                           round(mean, 4), round(var**0.5, 4),
                            len(jaccard_similarities), len(final_scg_list)))
             except:
-                out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
-                           "NA", "NA", "NA"))
+                out_file.write("{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                           "NA", "NA", "NA", "NA"))
 
     return temp_output
 # ------------------------------------------------------
@@ -341,12 +344,15 @@ def double_kaai_parser(query_id):
                 else:
                     continue
             try:
-                out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
-                           round(sum(jaccard_similarities)/len(jaccard_similarities), 4),
+                n = len(jaccard_similarities)
+                mean = sum(jaccard_similarities)/n
+                var = sum([ (x - mean)**2 for x in jaccard_similarities ])/(n - 1)
+                out_file.write("{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                           round(mean, 4), round(var**0.5, 4),
                            len(jaccard_similarities), len(final_scg_list)))
             except:
-                out_file.write("{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
-                           "NA", "NA", "NA"))
+                out_file.write("{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                           "NA", "NA", "NA", "NA"))
     return temp_output
 # ------------------------------------------------------
 
