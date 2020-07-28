@@ -22,6 +22,7 @@ from pathlib import Path
 from sys import argv
 from sys import exit
 from functools import partial
+from os.path import realpath
 
 
 ################################################################################
@@ -111,7 +112,7 @@ def run_hmmsearch(input_file):
     name = file_path.name
     hmm_output = folder / (name + '.hmm')
     temp_output = folder / (name + '.temp')
-    script_path = Path(__file__)
+    script_path = Path(realpath(__file__))
     script_dir = script_path.parent
     hmm_complete_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
     subprocess.call(["hmmsearch", "--tblout", str(hmm_output), "-o", str(temp_output), "--cut_tc", "--cpu", "1",
