@@ -618,7 +618,7 @@ def single_kaai_parser_all_v_all(args):
             
             final_scg_list = numpy.intersect1d(query_scg_list, target_scg_list)
 			
-			original_final_scg_len = min(len(query_scg_list), len(target_scg_list))
+            original_final_scg_len = min(len(query_scg_list), len(target_scg_list))
             
             #I would like to figure out how to vectorize this.
             for accession in final_scg_list:        
