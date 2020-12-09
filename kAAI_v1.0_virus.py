@@ -23,6 +23,8 @@ from sys import argv
 from sys import exit
 from functools import partial
 from os.path import realpath
+import numpy
+import tempfile
 
 
 ################################################################################
@@ -311,6 +313,7 @@ def build_kmers(sequence, ksize):
 # ------------------------------------------------------
 
 # --- Parse kAAI when query == reference ---
+#Carlos, This function is not used with the new changes
 # ------------------------------------------------------
 def single_kaai_parser(query_id):
     """
@@ -323,7 +326,12 @@ def single_kaai_parser(query_id):
         [Path to output] -- Path to output file
     """
     file_path = Path(query_id)
-    running_folder = Path.cwd()
+	
+	#Carlos, tempdir for safety
+    tmp_folder = tempfile.TemporaryDirectory()
+    running_folder = tmp_folder.name
+	
+	
     temp_output = running_folder / file_path.with_suffix('.aai.temp')
     # Get number and list of SCG detected in query
     query_num_scg = len(query_kmer_dictionary[query_id])
@@ -379,7 +387,12 @@ def single_virus_kaai_parser(query_id):
         [Path to output] -- Path to output file
     """
     file_path = Path(query_id)
-    running_folder = Path.cwd()
+	
+	#Carlos, tempdir for safety
+    tmp_folder = tempfile.TemporaryDirectory()
+    running_folder = tmp_folder.name
+	
+	
     temp_output = running_folder / file_path.with_suffix('.aai.temp')
     # Start comparison with all genomes in the query dictionary
     with open(temp_output, 'w') as out_file:
@@ -409,7 +422,12 @@ def double_kaai_parser(query_id):
         [Path to output] -- Path to output file
     """
     file_path = Path(query_id)
-    running_folder = Path.cwd()
+	
+	#Carlos, tempdir for safety
+    tmp_folder = tempfile.TemporaryDirectory()
+    running_folder = tmp_folder.name
+	
+	
     temp_output = running_folder / file_path.with_suffix('.aai.temp')
     # Get number and list of SCG detected in query
     query_num_scg = len(query_kmer_dictionary[query_id])
@@ -464,7 +482,12 @@ def double_viral_kaai_parser(query_id):
         [Path to output] -- Path to output file
     """
     file_path = Path(query_id)
-    running_folder = Path.cwd()
+	
+	#Carlos, tempdir for safety
+    tmp_folder = tempfile.TemporaryDirectory()
+    running_folder = tmp_folder.name
+	
+	
     temp_output = running_folder / file_path.with_suffix('.aai.temp')
     # Start comparison with all genomes in the query dictionary
     with open(temp_output, 'w') as out_file:
@@ -515,6 +538,200 @@ def merge_dicts(dictionaries):
         result.update(kmer_dictionary)
     return result
 # ------------------------------------------------------
+
+
+#My version 1 - numpy-ized
+def single_kaai_parser_all_v_all(args):
+    """
+    Calculates Jaccard distances on kmers from proteins shared
+    
+    Arguments:
+        query_id {str} -- Id of the query genome
+    
+    Returns:
+        [Path to output] -- Path to output file
+    """
+    #Use split as slice if true
+    
+    query_id = args[0]
+    skip_first_n = args[1]
+    
+    file_path = Path(query_id)
+
+    tmp_folder = tempfile.TemporaryDirectory()
+    running_folder = tmp_folder.name
+    
+    #Just for my own testing. Temp dir is definitely the correct choice, here.
+    #running_folder = Path("faster_kaai")
+    
+    temp_output = running_folder / file_path.with_suffix('.aai.temp')
+
+    
+    #The goal is to numpy-ize the following loop in all possible aspects for a (hopeful) speed increase
+    
+    
+    #query_num_scg = len(query_kmer_dictionary[query_id])
+    
+    query_scg_list = numpy.array(list(query_kmer_dictionary[query_id].keys()))
+
+    with open(temp_output, 'w') as out_file:
+    
+        '''
+        Target genomes each control a set of protein family keys
+        
+        The goal is to get the jaccard index for the kmers in all cases 
+        of shared protein families for the two genomes in question, for 
+        each pair of genomes
+        
+        From above, we have the number of proteins in the query dict
+        and a list of the IDs
+        
+        below we get the number of proteins in the target dict
+        and a list of the IDs
+        
+        1 choose the shorter list (each item has to be in both to be used, after all)
+        2 check if each family is in both lists 
+        (kind of an unnecessarily big search cost, yeah? O(n) time with very few n = 1 cases; maybe we can make a dict of dicts of IDs, and check with try: [ID] except: ?)
+        3 get all of the jaccard similarities for kmers in shared protein families
+        
+        4 calculate the mean and variance for each similarity set
+        
+        5 repeat for the remaining genomes.
+            
+        '''
+        
+        #for target_genome, scg_ids in query_kmer_dictionary.items():
+        for target_genome in list(query_kmer_dictionary.keys())[skip_first_n:]:
+            scg_ids = query_kmer_dictionary[target_genome]
+            
+            #If self, 1.0 similarity.
+            if query_id == target_genome:
+                    out_file.write("{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                    1.0, 0.0,
+                    len(query_scg_list), len(query_scg_list)))
+                    continue
+            
+            jaccard_similarities = []
+            # Get number and list of SCG detected in reference
+            #target_num_scg = len(scg_ids)
+            target_scg_list = numpy.array(list(scg_ids.keys()))
+            
+            final_scg_list = numpy.intersect1d(query_scg_list, target_scg_list)
+			
+			original_final_scg_len = min(len(query_scg_list), len(target_scg_list))
+            
+            #I would like to figure out how to vectorize this.
+            for accession in final_scg_list:        
+                #Because of the prep work, these are already numpy arrays of numbers keying to the kmers they represent from the old kmer dict..
+                kmers_query = query_kmer_dictionary[query_id][accession]
+                kmers_target = query_kmer_dictionary[target_genome][accession]
+                
+                # Calculate jaccard_similarity - intersection is by far the slowest step, so this is by far the best place to optimize.
+                if len(kmers_query) < len(kmers_target):
+                    intersection = len(intersect1d_searchsorted(kmers_query, kmers_target))
+                else:
+                    intersection = len(intersect1d_searchsorted(kmers_target, kmers_query))
+                
+                union = len(numpy.union1d(kmers_query, kmers_target))
+                jaccard_similarities.append(intersection / union)
+            
+            #Allow for numpy in-builts; they're a little faster.
+            jaccard_similarities = numpy.array(jaccard_similarities, dtype=numpy.float_)
+            
+            try:
+                #No longer needed.
+                #n = len(jaccard_similarities)
+                mean = numpy.mean(jaccard_similarities)
+                var = numpy.std(jaccard_similarities)
+                out_file.write("{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                           round(mean, 4), round(var, 4),
+                           len(jaccard_similarities), original_final_scg_len))
+            except:
+                out_file.write("{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                           "NA", "NA", "NA", "NA"))
+        return temp_output
+
+        
+def initializer_tracker(_dictionary1, _dictionary2):
+    """
+    Make dictionary available for multiprocessing
+    """
+    global kmer_dict
+    global tracker_dict
+    kmer_dict = _dictionary1
+    tracker_dict = _dictionary2
+    
+
+def unique_kmers(kmer_dict):
+
+    tracker_dict = {}
+    
+    counter = 0
+    
+    for file in kmer_dict:
+        for id in kmer_dict[file]:
+            #These are the actual kmers
+            for kmer in kmer_dict[file][id].split(','):
+                #Hash might be fast?
+                try:
+                    tracker_dict[kmer]
+                except:
+                    tracker_dict[kmer] = counter
+                    counter += 1
+    
+    return tracker_dict
+    
+
+def convert_kmers_to_indices(kmer_dict):
+    for genome in kmer_dict:
+        inner_count = 0
+        cur_tup = string_to_tup(genome)
+        for pf in kmer_dict[genome]:
+            kmer_dict[genome][pf] = cur_tup[inner_count]
+            inner_count += 1
+        
+    return kmer_dict
+
+def string_to_tup(genome):
+    sets = []
+    for pf in kmer_dict[genome]:
+        curset = []
+        for kmer in kmer_dict[genome][pf].split(","):
+            curset.append(tracker_dict[kmer])
+        
+        #Do all the overhead here, ONCE.
+        sets.append(numpy.sort(numpy.unique(numpy.array(curset, dtype=numpy.int32))))
+    
+    return(sets)
+    
+def numpyize_kmers(kmer_dict):
+    #make kmer global for tracker
+    single_dictionary_initializer(kmer_dict)
+    #get a list of kmer - index for all unique kmers
+    print("Indexing unique kmers")
+    tracker = unique_kmers(kmer_dict)
+    #Make these global for other functions
+    initializer_tracker(kmer_dict, tracker)
+    #convert comma sep. strings of kmers to ascending sorted lists of unique integers corresponding to the kmers in each protein, for each genome
+    print("Keying kmers")
+    kmer_dict = convert_kmers_to_indices(kmer_dict)
+    
+    #Get skip indices
+    smartargs = []
+    genome_ids = list(kmer_dict.keys())
+    for i in range(0, len(genome_ids)):
+        smartargs.append([genome_ids[i], i])
+		
+    print("Beginning AAI calculations now.")
+        
+    return kmer_dict, smartargs
+    
+#relies on assuming that the values in both of these arrays are unique and sorted, which I do in str_to_tup
+def intersect1d_searchsorted(A,B):
+    idx = numpy.searchsorted(B,A)
+    idx[idx==len(B)] = 0
+    return A[B[idx] == A]    
+	
 
 ################################################################################
 """---2.0 Main Function---"""
@@ -671,7 +888,8 @@ def main():
                             temp_dict = pickle.load(database_handle)
                             if isinstance(temp_dict,dict):
                                 query_kmer_dict_list.append(temp_dict)
-                                print(query_kmer_dict_list)
+								#Carlos, this line serves no purpose but does take a bunch of time and mem.
+                                #print(query_kmer_dict_list)
                             else:
                                 exit("One of the database files appear to have the wrong format. Please provide a correctly formated databases.")
             query_kmer_dict = merge_dicts(query_kmer_dict_list)
@@ -1024,8 +1242,12 @@ def main():
             if same_inputs == True:
                 query_id_list = query_kmer_dict.keys()
                 try:
-                    pool = multiprocessing.Pool(threads, initializer = single_dictionary_initializer, initargs = (query_kmer_dict,))
-                    Fraction_Results = pool.map(single_kaai_parser, query_id_list)
+					
+                    fixed_dict, smart_args = numpyize_kmers(query_kmer_dict)
+                    #single_dictionary_initializer(fixed_dict)
+                
+                    pool = multiprocessing.Pool(threads, initializer = single_dictionary_initializer, initargs = (fixed_dict,))
+                    Fraction_Results = pool.map(single_kaai_parser_all_v_all, smart_args)
                 finally:
                     pool.close()
                     pool.join()
@@ -1069,5 +1291,8 @@ def main():
     # If comparing viral genomes
 
 
+	
+	
+	
 if __name__ == "__main__":
     main()
