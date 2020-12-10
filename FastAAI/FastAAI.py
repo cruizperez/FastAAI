@@ -425,6 +425,8 @@ def single_kaai_parser(arguments):
                 var = np.std(jaccard_similarities)
                 if mean >= 0.9:
                     aai_est = ">90%"
+                elif mean == 0:
+                    aai_est = "<30%"
                 else:
                     aai_est = kaai_to_aai(mean)
                 out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
@@ -523,6 +525,8 @@ def double_kaai_parser(arguments):
                 var = np.std(jaccard_similarities)
                 if mean >= 0.9:
                     aai_est = ">90%"
+                elif mean == 0:
+                    aai_est = "<30%"
                 else:
                     aai_est = kaai_to_aai(mean)
                 out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
