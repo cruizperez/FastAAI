@@ -384,7 +384,6 @@ def single_kaai_parser(arguments):
     Returns:
         [Path to output] -- Path to output file
     """
-    print("Beginning FastAAI pairwise calculations now.")
     temporal_folder = arguments[0]
     query_id = arguments[1]
     skip_first_n = arguments[2]
@@ -401,7 +400,6 @@ def single_kaai_parser(arguments):
             # Get number and list of SCG detected in reference
             target_scg_list = np.array(list(query_kmer_dictionary[target_genome].keys()))
             shorter_genome = min(len(query_scg_list), len(target_scg_list))
-            start = datetime.datetime.now()
             #If self, 1.0 similarity.
             if query_id == target_genome:
                     out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
@@ -422,8 +420,6 @@ def single_kaai_parser(arguments):
             
             # Allow for numpy in-builts; they're a little faster.
             jaccard_similarities = np.array(jaccard_similarities, dtype=np.float_)
-            end = datetime.datetime.now()
-            print(end - start)
             try:
                 mean = np.mean(jaccard_similarities)
                 var = np.std(jaccard_similarities)
@@ -487,7 +483,6 @@ def double_kaai_parser(arguments):
     Returns:
         [Path to output] -- Path to output file
     """
-    print("Beginning FastAAI pairwise calculations now.")
     temporal_folder = arguments[0]
     query_id = arguments[1]
     
@@ -503,7 +498,6 @@ def double_kaai_parser(arguments):
             # Get number and list of SCG detected in reference
             target_scg_list = np.array(list(reference_kmer_dictionary[target_genome].keys()))
             shorter_genome = min(len(query_scg_list), len(target_scg_list))
-            start = datetime.datetime.now()
             #If self, 1.0 similarity.
             if query_id == target_genome:
                     out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
@@ -515,7 +509,7 @@ def double_kaai_parser(arguments):
             final_scg_list = np.intersect1d(query_scg_list, target_scg_list)
             # Extract a list of kmers for each SCG in the list
             query_kmer_list = list(map(query_kmer_dictionary[query_id].get, final_scg_list))
-            reference_kmer_list = list(map(query_kmer_dictionary[target_genome].get, final_scg_list))
+            reference_kmer_list = list(map(reference_kmer_dictionary[target_genome].get, final_scg_list))
             # Calculate the jaccard index
             for accession in range(len(query_kmer_list)):
                 union = len(np.union1d(query_kmer_list[accession], reference_kmer_list[accession]))
@@ -524,8 +518,6 @@ def double_kaai_parser(arguments):
             
             # Allow for numpy in-builts; they're a little faster.
             jaccard_similarities = np.array(jaccard_similarities, dtype=np.float_)
-            end = datetime.datetime.now()
-            print(end - start)
             try:
                 mean = np.mean(jaccard_similarities)
                 var = np.std(jaccard_similarities)
@@ -1192,6 +1184,7 @@ def main():
                 # Create global kmer index dictionary "global_kmer_index_dictionary"
                 global_unique_kmers([query_kmer_dict])
                 query_kmer_dict, query_smart_args_tempdir = transform_kmer_dicts_to_arrays(query_kmer_dict, temporal_working_directory, single_dataset=True)
+                print("Beginning FastAAI pairwise calculations now.")
                 try:
                     pool = multiprocessing.Pool(threads, initializer = single_dictionary_initializer, initargs = (query_kmer_dict,))
                     Fraction_Results = pool.map(single_kaai_parser, query_smart_args_tempdir)
@@ -1202,6 +1195,7 @@ def main():
                 global_unique_kmers([query_kmer_dict, reference_kmer_dict])
                 query_kmer_dict, query_smart_args_tempdir = transform_kmer_dicts_to_arrays(query_kmer_dict, temporal_working_directory, single_dataset=False)
                 reference_kmer_dict, _ref_smart_args_tempdir = transform_kmer_dicts_to_arrays(reference_kmer_dict, temporal_working_directory, single_dataset=False)
+                print("Beginning FastAAI pairwise calculations now.")
                 try:
                     pool = multiprocessing.Pool(threads, initializer = two_dictionary_initializer, initargs = (query_kmer_dict, reference_kmer_dict))
                     Fraction_Results = pool.map(double_kaai_parser, query_smart_args_tempdir)
