@@ -4,8 +4,8 @@
 ########################################################################
 # Author:	   Carlos Ruiz
 # Intitution:   Georgia Institute of Technology
-# Version:	  0.8
-# Date:		 March 02, 2020
+# Version:	  1.0
+# Date:		 Dec 10, 2020
 
 # Description: Calculates the average amino acid identity using k-mers
 from single copy genes. It is a faster version of the regular AAI (Blast
