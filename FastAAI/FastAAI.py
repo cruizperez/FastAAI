@@ -400,6 +400,7 @@ def single_kaai_parser(arguments):
         for target_genome in list(query_kmer_dictionary.keys())[skip_first_n:]:
             # Get number and list of SCG detected in reference
             target_scg_list = np.array(list(query_kmer_dictionary[target_genome].keys()))
+            shorter_genome = min(len(query_scg_list), len(target_scg_list))
             start = datetime.datetime.now()
             #If self, 1.0 similarity.
             if query_id == target_genome:
@@ -432,7 +433,7 @@ def single_kaai_parser(arguments):
                     aai_est = kaai_to_aai(mean)
                 out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
                            round(mean, 4), round(var, 4),
-                           len(jaccard_similarities), len(final_scg_list), aai_est))
+                           len(jaccard_similarities), shorter_genome, aai_est))
             except:
                 out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
                            "NA", "NA", "NA", "NA", "NA"))
@@ -501,6 +502,7 @@ def double_kaai_parser(arguments):
         for target_genome in list(reference_kmer_dictionary.keys()):
             # Get number and list of SCG detected in reference
             target_scg_list = np.array(list(reference_kmer_dictionary[target_genome].keys()))
+            shorter_genome = min(len(query_scg_list), len(target_scg_list))
             start = datetime.datetime.now()
             #If self, 1.0 similarity.
             if query_id == target_genome:
@@ -533,7 +535,7 @@ def double_kaai_parser(arguments):
                     aai_est = kaai_to_aai(mean)
                 out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
                            round(mean, 4), round(var, 4),
-                           len(jaccard_similarities), len(final_scg_list), aai_est))
+                           len(jaccard_similarities), shorter_genome, aai_est))
             except:
                 out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
                            "NA", "NA", "NA", "NA", "NA"))
