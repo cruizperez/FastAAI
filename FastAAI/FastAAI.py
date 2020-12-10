@@ -744,7 +744,7 @@ def main():
     keep = args.keep
     virus = args.virus
 
-    print("kAAI started on {}".format(datetime.datetime.now()))
+    print("FastAAI started on {}".format(datetime.datetime.now()))
     # Check user input
     # ------------------------------------------------------
     # Check if no query was provided
@@ -1233,7 +1233,7 @@ def main():
                 with open(file) as Temp:
                     shutil.copyfileobj(Temp, outfile)
                 file.unlink()
-        print("kAAI finishied correctly on {}".format(datetime.datetime.now()))
+        print("FastAAI finishied correctly on {}".format(datetime.datetime.now()))
     # ------------------------------------------------------
     # If comparing viral genomes
 
