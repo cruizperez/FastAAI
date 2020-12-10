@@ -24,6 +24,8 @@ from pathlib import Path
 from sys import argv
 from sys import exit
 from functools import partial
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import CountVectorizer
 
 
 ################################################################################
@@ -278,23 +280,44 @@ def read_viral_kmers_from_file(input_information):
     final_filename = input_information[0]
     protein_file = input_information[1]
     kmer_size = input_information[2]
-    scg_kmers = set()
+    
+    #! Cosine similarituy version
+    scg_kmers = []
     protein_sequence = ""
     store_sequence = False
     with open(protein_file) as fasta_in:
         for line in fasta_in:
             if line.startswith(">"):
                 if store_sequence == True:
-                    kmers = build_kmers(protein_sequence, kmer_size)
-                    kmers = set(kmers.split(","))
-                    scg_kmers.update(kmers)
+                    kmers = build_viral_kmers(protein_sequence, kmer_size)
+                    scg_kmers.append(kmers)
                     protein_sequence = ""
                 else:
                     protein_sequence = ""
                     store_sequence = True
             else:
                 protein_sequence += line.strip()
-    genome_kmers = {final_filename : list(scg_kmers)}
+    genome_kmers = {final_filename : ' '.join(scg_kmers)}
+
+
+    #! Regular Jaccard Version
+    # scg_kmers = set()
+    # protein_sequence = ""
+    # store_sequence = False
+    # with open(protein_file) as fasta_in:
+    #     for line in fasta_in:
+    #         if line.startswith(">"):
+    #             if store_sequence == True:
+    #                 kmers = build_viral_kmers(protein_sequence, kmer_size)
+    #                 kmers = set(kmers.split(","))
+    #                 scg_kmers.update(kmers)
+    #                 protein_sequence = ""
+    #             else:
+    #                 protein_sequence = ""
+    #                 store_sequence = True
+    #         else:
+    #             protein_sequence += line.strip()
+    # genome_kmers = {final_filename : list(scg_kmers)}
     return genome_kmers
 # ------------------------------------------------------
 
@@ -308,6 +331,19 @@ def build_kmers(sequence, ksize):
         kmer = sequence[i:i + ksize]
         kmers.append(kmer)
     kmers_set = ','.join(set(kmers))
+    return kmers_set
+# ------------------------------------------------------
+
+# --- Build Kmers ---
+# ------------------------------------------------------
+def build_viral_kmers(sequence, ksize):
+    kmers = []
+    n_kmers = len(sequence) - ksize + 1
+
+    for i in range(n_kmers):
+        kmer = sequence[i:i + ksize]
+        kmers.append(kmer)
+    kmers_set = ' '.join(kmers)
     return kmers_set
 # ------------------------------------------------------
 
@@ -419,28 +455,32 @@ def single_kaai_parser(arguments):
                 jaccard_similarities.append(intersection / union)
             
             # Allow for numpy in-builts; they're a little faster.
-            jaccard_similarities = np.array(jaccard_similarities, dtype=np.float_)
-            try:
-                mean = np.mean(jaccard_similarities)
-                var = np.std(jaccard_similarities)
-                if mean >= 0.9:
-                    aai_est = ">90%"
-                elif mean == 0:
-                    aai_est = "<30%"
-                else:
-                    aai_est = kaai_to_aai(mean)
+            if len(jaccard_similarities) > 0:
+                jaccard_similarities = np.array(jaccard_similarities, dtype=np.float_)
+                try:
+                    mean = np.mean(jaccard_similarities)
+                    var = np.std(jaccard_similarities)
+                    if mean >= 0.9:
+                        aai_est = ">90%"
+                    elif mean == 0:
+                        aai_est = "<30%"
+                    else:
+                        aai_est = kaai_to_aai(mean)
+                    out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                            round(mean, 4), round(var, 4),
+                            len(jaccard_similarities), shorter_genome, aai_est))
+                except:
+                    out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                            "NA", "NA", "NA", "NA", "NA"))
+            else:
                 out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
-                           round(mean, 4), round(var, 4),
-                           len(jaccard_similarities), shorter_genome, aai_est))
-            except:
-                out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
-                           "NA", "NA", "NA", "NA", "NA"))
+                            "NA", "NA", "NA", "NA", "NA"))
     return temporal_output
 # ------------------------------------------------------
 
 # --- Parse viral kAAI when query == reference ---
 # ------------------------------------------------------
-def single_virus_kaai_parser(query_id):
+def single_virus_kaai_parser(arguments):
     """
     Calculates Jaccard distances on kmers from viral proteins
     
@@ -450,28 +490,46 @@ def single_virus_kaai_parser(query_id):
     Returns:
         [Path to output] -- Path to output file
     """
-    file_path = Path(query_id)
-	
-	#Carlos, tempdir for safety
-    tmp_folder = tempfile.TemporaryDirectory()
-    running_folder = tmp_folder.name
-	
-	
-    temp_output = running_folder / file_path.with_suffix('.aai.temp')
-    # Start comparison with all genomes in the query dictionary
-    with open(temp_output, 'w') as out_file:
+
+    temporal_folder = arguments[0]
+    query_id = arguments[1]
+
+    temporal_folder = Path(str(temporal_folder.name))
+    temporal_file = Path(query_id).name + '.aai.temp'
+    temporal_output = temporal_folder / temporal_file
+    #! Cosine implementation
+    with open(temporal_output, 'w') as out_file:
+        kmers_query = query_kmer_dictionary[query_id]
         for target_genome, kmers_target in query_kmer_dictionary.items():
-            jaccard_index = None
-            kmers_query = set(query_kmer_dictionary[query_id])
-            intersection = len(kmers_query.intersection(kmers_target))
-            union = len(kmers_query.union(kmers_target))
-            try:
-                jaccard_index = intersection / union
-                out_file.write("{}\t{}\t{}\n".format(query_id, target_genome, jaccard_index))
-            except:
-                out_file.write("{}\t{}\tNA\n".format(query_id, target_genome))
-    return temp_output
+            start = datetime.datetime.now()
+            kmer_signatures = [kmers_query, kmers_target]
+            # print(kmer_signatures)
+            kmer_vectorizer = CountVectorizer().fit_transform(kmer_signatures)
+            kmer_vector = kmer_vectorizer.toarray()
+            cosine_simil = cosine_sim_vectors(kmer_vector[0], kmer_vector[1])
+            out_file.write("{}\t{}\t{}\n".format(query_id, target_genome, cosine_simil))
+            end = datetime.datetime.now()
+            print(end - start)
+    #! Regular Jaccard comparison
+    # # Start comparison with all genomes in the query dictionary
+    # with open(temporal_output, 'w') as out_file:
+    #     for target_genome, kmers_target in query_kmer_dictionary.items():
+    #         jaccard_index = None
+    #         kmers_query = set(query_kmer_dictionary[query_id])
+    #         intersection = len(kmers_query.intersection(kmers_target))
+    #         union = len(kmers_query.union(kmers_target))
+    #         try:
+    #             jaccard_index = intersection / union
+    #             out_file.write("{}\t{}\t{}\n".format(query_id, target_genome, jaccard_index))
+    #         except:
+    #             out_file.write("{}\t{}\tNA\n".format(query_id, target_genome))
+    return temporal_output
 # ------------------------------------------------------
+
+def cosine_sim_vectors(vector1, vector2):
+    vector1 = vector1.reshape(1,-1)
+    vector2 = vector2.reshape(1,-1)
+    return cosine_similarity(vector1, vector2)[0][0]
 
 # --- Parse kAAI when query != reference ---
 # ------------------------------------------------------
@@ -519,22 +577,26 @@ def double_kaai_parser(arguments):
                 jaccard_similarities.append(intersection / union)
             
             # Allow for numpy in-builts; they're a little faster.
-            jaccard_similarities = np.array(jaccard_similarities, dtype=np.float_)
-            try:
-                mean = np.mean(jaccard_similarities)
-                var = np.std(jaccard_similarities)
-                if mean >= 0.9:
-                    aai_est = ">90%"
-                elif mean == 0:
-                    aai_est = "<30%"
-                else:
-                    aai_est = kaai_to_aai(mean)
+            if len(jaccard_similarities) > 0:
+                jaccard_similarities = np.array(jaccard_similarities, dtype=np.float_)
+                try:
+                    mean = np.mean(jaccard_similarities)
+                    var = np.std(jaccard_similarities)
+                    if mean >= 0.9:
+                        aai_est = ">90%"
+                    elif mean == 0:
+                        aai_est = "<30%"
+                    else:
+                        aai_est = kaai_to_aai(mean)
+                    out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                            round(mean, 4), round(var, 4),
+                            len(jaccard_similarities), shorter_genome, aai_est))
+                except:
+                    out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
+                            "NA", "NA", "NA", "NA", "NA"))
+            else:
                 out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
-                           round(mean, 4), round(var, 4),
-                           len(jaccard_similarities), shorter_genome, aai_est))
-            except:
-                out_file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(query_id, target_genome,
-                           "NA", "NA", "NA", "NA", "NA"))
+                            "NA", "NA", "NA", "NA", "NA"))
     return temporal_output
 
 
@@ -1208,10 +1270,13 @@ def main():
                     pool.join()
         else:
             if same_inputs == True:
-                query_id_list = query_kmer_dict.keys()
+                print(temporal_working_directory)
+                smart_args = []
+                for query_id in query_kmer_dict.keys():
+                    smart_args.append((temporal_working_directory, query_id))
                 try:
                     pool = multiprocessing.Pool(threads, initializer = single_dictionary_initializer, initargs = (query_kmer_dict,))
-                    Fraction_Results = pool.map(single_virus_kaai_parser, query_id_list)
+                    Fraction_Results = pool.map(single_virus_kaai_parser, smart_args)
                 finally:
                     pool.close()
                     pool.join()
