@@ -153,7 +153,7 @@ def run_hmmsearch(input_file):
     temp_output = folder / (name + '.temp')
     script_path = Path(__file__)
     script_dir = script_path.parent
-    hmm_complete_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
+    hmm_complete_model = script_dir / "../00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
     subprocess.call(["hmmsearch", "--tblout", str(hmm_output), "-o", str(temp_output), "--cut_tc", "--cpu", "1",
                     str(hmm_complete_model), str(file_path)])
     temp_output.unlink()
