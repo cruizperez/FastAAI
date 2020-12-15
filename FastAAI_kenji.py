@@ -221,6 +221,12 @@ def kmer_extract(input_files):
 	final_filename = input_files[0]
 	protein_file = input_files[1]
 	scg_hmm_file = input_files[2]
+	
+	#inputs now include the folder for the query.
+	scg_hmm_file = scg_hmm_file.replace("/hmms/", "/filtered_hmms/")
+	
+	#scg hmm file not working - references hmms/*.hmm.filt, should ref hmms_filtered/*.hmm
+	
 	positive_matches = {}
 	positive_proteins = []
 	with open(scg_hmm_file, 'r') as hmm_input:
@@ -401,7 +407,6 @@ def global_unique_viral_kmers(kmer_dictionaries):
 #Similarly, we should be able to parallelize this process. 
 #Each genome should only be accessed once; global the dict and processes on genomes.
 def convert_kmers_to_indices(kmer_dict):
-	print("Converting kmers to indices")
 	for genome in kmer_dict:
 		for protein_marker in kmer_dict[genome]:
 			kmer_index = []
@@ -418,7 +423,6 @@ def convert_kmers_to_indices(kmer_dict):
 #TODO
 #Same as above.
 def convert_viral_kmers_to_indices(kmer_dict):
-	print("Converting kmers to indices")
 	for genome in kmer_dict:
 		kmer_index = []
 		for kmer in kmer_dict[genome][1].split(','):
@@ -431,8 +435,7 @@ def convert_viral_kmers_to_indices(kmer_dict):
 
 # --- Transform kmer dictionaries to index dictionaries ---
 # ------------------------------------------------------
-#TODO
-#Shouldn't 'temporal' be 'temporary?'
+
 #Also, if we parallelize the comparison process and leave a writer thread in the master to write their returns, we can probs skip the whole multi-file, temp dir thing anyway.
 def transform_kmer_dicts_to_arrays(kmer_dict, temporary_working_directory, single_dataset):
 	kmer_dict = convert_kmers_to_indices(kmer_dict)
@@ -737,6 +740,86 @@ def kaai_to_aai(kaai):
 	return aai_hat
 # ------------------------------------------------------
 	
+
+################################################################################
+'''--- 2.0 Utility functions isloating flow of control for various steps of FastAAI ---'''
+
+#Parser modification for printing usage on no args.
+class MyParser(argparse.ArgumentParser):
+    def error(self, message):
+        sys.stderr.write('error: %s\n' % message)
+        self.print_help()
+        sys.exit(2)
+
+#Separate options function for cleanliness in main.
+def options():
+	# Setup parser for arguments.
+	parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
+			description='''This script calculates the average amino acid identity using k-mers\n'''
+						'''from single copy genes. It is a faster version of the regular AAI '''
+						'''(Blast or Diamond) and the hAAI implemented in MiGA.'''
+			'''Usage: ''' + argv[0] + ''' -p [Protein Files] -t [Threads] -o [Output]\n'''
+			'''Global mandatory parameters: -g [Genome Files] OR -p [Protein Files] OR -s [SCG HMM Results] -o [AAI Table Output]\n'''
+			'''Optional Database Parameters: See ''' + argv[0] + ' -h')
+	mandatory_options = parser.add_argument_group('Mandatory i/o options. You must select an option for the queries and one for the references.')
+	#---------------------------------------------------------------------------------------------------------------------------------------------
+	mandatory_options.add_argument('--qg', dest='query_genomes', action='store', required=False,
+									help='File with list of query genomes.')
+	#---------------------------------------------------------------------------------------------------------------------------------------------								
+	mandatory_options.add_argument('--qp', dest='query_proteins', action='store', required=False,
+									help='File with list of query proteins.')
+	#---------------------------------------------------------------------------------------------------------------------------------------------								
+	mandatory_options.add_argument('--qh', dest='query_hmms', action='store', required=False,
+									help=textwrap.dedent('''
+									File with list of pre-computed query hmmsearch results.
+									If you select this option you must also provide a file with 
+									a list of protein files for the queries (with --qp).
+									'''))
+	#---------------------------------------------------------------------------------------------------------------------------------------------								
+	mandatory_options.add_argument('--qd', dest='query_database', action='store', required=False,
+									help='File with list of pre-indexed query databases.')
+	#---------------------------------------------------------------------------------------------------------------------------------------------								
+	mandatory_options.add_argument('--rg', dest='reference_genomes', action='store', required=False,
+									help='File with list of reference genomes.')
+	#---------------------------------------------------------------------------------------------------------------------------------------------								
+	mandatory_options.add_argument('--rp', dest='reference_proteins', action='store', required=False,
+									help='File with list of reference proteins.')
+	#---------------------------------------------------------------------------------------------------------------------------------------------								
+	mandatory_options.add_argument('--rh', dest='reference_hmms', action='store', required=False,
+									help=textwrap.dedent('''
+									File with list of pre-computed reference hmmsearch results.
+									If you select this option you must also provide a file with 
+									a list of protein files for the references (with --qp).
+									'''))
+	#---------------------------------------------------------------------------------------------------------------------------------------------								
+	mandatory_options.add_argument('--rd', dest='reference_database', action='store', required=False,
+									help='File with list of pre-indexed reference databases.')
+	#---------------------------------------------------------------------------------------------------------------------------------------------								
+	mandatory_options.add_argument('-o', '--output', dest='output', default = "kaai_comparisons.txt", action='store', required=False, help='Output file. By default kaai_comparisons.txt')
+	#---------------------------------------------------------------------------------------------------------------------------------------------
+	mandatory_options.add_argument('-d', '--directory', dest='directory', default = os.getcwd(), action='store', required=False, help='Place outputs in this directory. Default is the working directory.')
+	#---------------------------------------------------------------------------------------------------------------------------------------------
+	additional_input_options = parser.add_argument_group('Behavior modification options.')
+	#---------------------------------------------------------------------------------------------------------------------------------------------										
+	additional_input_options.add_argument('-i', '--index', dest='index_db', action='store_true', required=False, 
+											help='Only index and store databases, i.e., do not perform comparisons.')
+	#---------------------------------------------------------------------------------------------------------------------------------------------										
+	misc_options = parser.add_argument_group('Miscellaneous options')
+	#---------------------------------------------------------------------------------------------------------------------------------------------
+	misc_options.add_argument('--virus', dest='virus', action='store_true', required=False,
+								help='Toggle virus-virus comparisons. Use only with viral genomes or proteins.')
+	#---------------------------------------------------------------------------------------------------------------------------------------------							
+	misc_options.add_argument('-t', '--threads', dest='threads', action='store', default=1, type=int, required=False,
+								help='Number of threads to use, by default 1')
+	#---------------------------------------------------------------------------------------------------------------------------------------------							
+	misc_options.add_argument('-k', '--keep', dest='keep', action='store_false', required=False,
+								help='Keep intermediate files, by default true')
+	#---------------------------------------------------------------------------------------------------------------------------------------------
+	args = parser.parse_args()
+	
+	return parser, args
+
+
 # --- Prepare tidy output directories for the user ---
 # ------------------------------------------------------
 def clean_outputs(output_directory, query_database, query_genomes, query_proteins, query_hmms, reference_database, reference_genomes, reference_proteins, reference_hmms):
@@ -788,89 +871,6 @@ def clean_outputs(output_directory, query_database, query_genomes, query_protein
 	return output_directory
 # ------------------------------------------------------
 
-
-
-################################################################################
-'''--- 2.0 Utility functions isloating flow of control for various steps of FastAAI ---'''
-
-#Parser modification for printing usage on no args.
-class MyParser(argparse.ArgumentParser):
-    def error(self, message):
-        sys.stderr.write('error: %s\n' % message)
-        self.print_help()
-        sys.exit(2)
-
-#Separate options function for cleanliness in main.
-#TODO - add default arguments for all of these.
-def options():
-	# Setup parser for arguments.
-	parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
-			description='''This script calculates the average amino acid identity using k-mers\n'''
-						'''from single copy genes. It is a faster version of the regular AAI '''
-						'''(Blast or Diamond) and the hAAI implemented in MiGA.'''
-			'''Usage: ''' + argv[0] + ''' -p [Protein Files] -t [Threads] -o [Output]\n'''
-			'''Global mandatory parameters: -g [Genome Files] OR -p [Protein Files] OR -s [SCG HMM Results] -o [AAI Table Output]\n'''
-			'''Optional Database Parameters: See ''' + argv[0] + ' -h')
-	mandatory_options = parser.add_argument_group('Mandatory i/o options. You must select an option for the queries and one for the references.')
-	#---------------------------------------------------------------------------------------------------------------------------------------------
-	mandatory_options.add_argument('--qg', dest='query_genomes', action='store', required=False,
-									help='File with list of query genomes.')
-	#---------------------------------------------------------------------------------------------------------------------------------------------								
-	mandatory_options.add_argument('--qp', dest='query_proteins', action='store', required=False,
-									help='File with list of query proteins.')
-	#---------------------------------------------------------------------------------------------------------------------------------------------								
-	mandatory_options.add_argument('--qh', dest='query_hmms', action='store', required=False,
-									help=textwrap.dedent('''
-									File with list of pre-computed query hmmsearch results.
-									If you select this option you must also provide a file with 
-									a list of protein files for the queries (with --qp).
-									'''))
-	#---------------------------------------------------------------------------------------------------------------------------------------------								
-	mandatory_options.add_argument('--qd', dest='query_database', action='store', required=False,
-									help='File with list of pre-indexed query databases.')
-	#---------------------------------------------------------------------------------------------------------------------------------------------								
-	mandatory_options.add_argument('--rg', dest='reference_genomes', action='store', required=False,
-									help='File with list of reference genomes.')
-	#---------------------------------------------------------------------------------------------------------------------------------------------								
-	mandatory_options.add_argument('--rp', dest='reference_proteins', action='store', required=False,
-									help='File with list of reference proteins.')
-	#---------------------------------------------------------------------------------------------------------------------------------------------								
-	mandatory_options.add_argument('--rh', dest='reference_hmms', action='store', required=False,
-									help=textwrap.dedent('''
-									File with list of pre-computed reference hmmsearch results.
-									If you select this option you must also provide a file with 
-									a list of protein files for the references (with --qp).
-									'''))
-	#---------------------------------------------------------------------------------------------------------------------------------------------								
-	mandatory_options.add_argument('--rd', dest='reference_database', action='store', required=False,
-									help='File with list of pre-indexed reference databases.')
-	#---------------------------------------------------------------------------------------------------------------------------------------------								
-	mandatory_options.add_argument('-o', '--output', dest='output', default = "kaai_comparisons.txt", action='store', required=False, help='Output file. By default kaai_comparisons.txt')
-	#---------------------------------------------------------------------------------------------------------------------------------------------
-	mandatory_options.add_argument('-d', '--directory', dest='directory', default = os.getcwd(), action='store', required=False, help='Place outputs in this directory. Default is the working directory.')
-	#---------------------------------------------------------------------------------------------------------------------------------------------
-	additional_input_options = parser.add_argument_group('Behavior modification options.')
-	#---------------------------------------------------------------------------------------------------------------------------------------------
-	additional_input_options.add_argument('-e', '--ext', dest='extension', action='store', required=False, 
-											help='Extension to remove from original filename, e.g. ".fasta"')
-	#---------------------------------------------------------------------------------------------------------------------------------------------										
-	additional_input_options.add_argument('-i', '--index', dest='index_db', action='store_true', required=False, 
-											help='Only index and store databases, i.e., do not perform comparisons.')
-	#---------------------------------------------------------------------------------------------------------------------------------------------										
-	misc_options = parser.add_argument_group('Miscellaneous options')
-	#---------------------------------------------------------------------------------------------------------------------------------------------
-	misc_options.add_argument('--virus', dest='virus', action='store_true', required=False,
-								help='Toggle virus-virus comparisons. Use only with viral genomes or proteins.')
-	#---------------------------------------------------------------------------------------------------------------------------------------------							
-	misc_options.add_argument('-t', '--threads', dest='threads', action='store', default=1, type=int, required=False,
-								help='Number of threads to use, by default 1')
-	#---------------------------------------------------------------------------------------------------------------------------------------------							
-	misc_options.add_argument('-k', '--keep', dest='keep', action='store_false', required=False,
-								help='Keep intermediate files, by default true')
-	#---------------------------------------------------------------------------------------------------------------------------------------------
-	args = parser.parse_args()
-	
-	return parser, args
 
 #Function for determining if appropriate args have been passed to FastAAI; if options are valid, return the provided inputs as query and reference inputs and True if inputs are identical.
 def check_inputs(query_genomes, query_proteins, query_hmms, query_database, virus, reference_genomes, reference_proteins, reference_hmms, reference_database):
@@ -927,6 +927,49 @@ def check_inputs(query_genomes, query_proteins, query_hmms, query_database, viru
 		
 	return query_input, reference_input
 
+
+#Function for loading a database; 
+#checks if the path is directly a database or if it's a file containing a list of paths
+#Loads one or several DBs as a result
+#used in check_and_load_database
+def load_database(database_path_or_list_of_paths):
+	kmer_dict = None
+	kmer_dict_list = []
+	
+	#If the passed argument is a database, thiw will be set to true by the try block
+	direct_reference = False
+	
+	#Attempt to directly open the path as a gzipped dict.
+	try:		
+		with gzip.open(database_path_or_list_of_paths, 'rb') as database_handle:
+			temp_dict = pickle.load(database_handle)
+		if isinstance(temp_dict,dict):
+			kmer_dict_list.append(temp_dict)
+		else:
+			exit("One of the database files appear to have the wrong format. Please provide a correctly formated databases.")
+		kmer_dict = merge_dicts(kmer_dict_list)
+		
+		direct_reference = True
+	except:
+		pass
+	
+	#or attempt to open the dict(s) from a list of paths in a file if the above fails
+	if not direct_reference:
+		with open(database_path_or_list_of_paths) as database_files:
+			for db_location in database_files:
+				if Path(db_location.strip()).is_file():
+					with gzip.open(db_location.strip(), 'rb') as database_handle:
+						temp_dict = pickle.load(database_handle)
+						if isinstance(temp_dict,dict):
+							kmer_dict_list.append(temp_dict)
+						else:
+							exit("One of the database files appear to have the wrong format. Please provide a correctly formated databases.")
+							
+		kmer_dict = merge_dicts(kmer_dict_list)
+			
+	return kmer_dict, kmer_dict_list
+
+	
 #Function for checking presence, correctness of passed databases; load if present and correct and return results
 def check_and_load_database(same_inputs, query_database, reference_database):
 	#* Database Parsing is the same regardless of bacterial or viral genomes
@@ -939,77 +982,62 @@ def check_and_load_database(same_inputs, query_database, reference_database):
 	query_kmer_dict_list = []
 	reference_kmer_dict = None
 	reference_kmer_dict_list = []
-	# If starting from database and query == reference
-	if same_inputs == True:
-		if query_database != None:
-			with open(query_database) as query_database_files:
-				for db_location in query_database_files:
-					if Path(db_location.strip()).is_file():
-						with gzip.open(db_location.strip(), 'rb') as database_handle:
-							temp_dict = pickle.load(database_handle)
-							if isinstance(temp_dict,dict):
-								query_kmer_dict_list.append(temp_dict)
-							else:
-								exit("One of the database files appear to have the wrong format. Please provide a correctly formated databases.")
-			query_kmer_dict = merge_dicts(query_kmer_dict_list)
-	else:
-	# If the inputs are not the same:
-		# If query and ref are provided
-		if query_database != None and reference_database != None:
-			with open(query_database, 'r') as query_database_files:
-				for db_location in query_database_files:
-					if Path(db_location.strip()).is_file():
-						with gzip.open(db_location.strip(), 'rb') as database_handle:
-							temp_dict = pickle.load(database_handle)
-							if isinstance(temp_dict,dict):
-								query_kmer_dict_list.append(temp_dict)
-							else:
-								exit("One of the query database files appear to have the wrong format. Please provide a correctly formated databases.")
-			query_kmer_dict = merge_dicts(query_kmer_dict_list)
-			with open(reference_database) as reference_database_files:
-				for db_location in reference_database_files:
-					if Path(db_location.strip()).is_file():
-						with gzip.open(db_location.strip(), 'rb') as database_handle:
-							temp_dict = pickle.load(database_handle)
-							if isinstance(temp_dict,dict):
-								reference_kmer_dict_list.append(temp_dict)
-							else:
-								exit("One of the reference database files appear to have the wrong format. Please provide a correctly formated databases.")
-			reference_kmer_dict = merge_dicts(reference_kmer_dict_list)
-		# If only the query has a db
-		elif query_database != None and reference_database == None:
-			with open(query_database) as query_database_files:
-				for db_location in query_database_files:
-					if Path(db_location.strip()).is_file():
-						with gzip.open(db_location.strip(), 'rb') as database_handle:
-							temp_dict = pickle.load(database_handle)
-							if isinstance(temp_dict,dict):
-								query_kmer_dict_list.append(temp_dict)
-							else:
-								exit("One of the query database files appear to have the wrong format. Please provide a correctly formated databases.")
-			query_kmer_dict = merge_dicts(query_kmer_dict_list)
-		# If only the reference has a db
-		elif query_database == None and reference_database != None:
-			with open(reference_database) as reference_database_files:
-				for db_location in reference_database_files:
-					if Path(db_location.strip()).is_file():
-						with gzip.open(db_location.strip(), 'rb') as database_handle:
-							temp_dict = pickle.load(database_handle)
-							if isinstance(temp_dict,dict):
-								reference_kmer_dict_list.append(temp_dict)
-							else:
-								exit("One of the reference database files appear to have the wrong format. Please provide a correctly formated databases.")
-			reference_kmer_dict = merge_dicts(reference_kmer_dict_list)
+	
+	direct_reference = False
+	
+	#direct load of a database file where the DB is passed as a path, not a list of paths.
+	if query_database != None:
+		query_kmer_dict, query_kmer_dict_list = load_database(query_database)
+	
+	#The remainder of the code anticipates results of None for these args both if the refs provided are anything but a pre-indexed DB and if refs==query
+	if reference_database != None and not same_inputs:
+		reference_kmer_dict, reference_kmer_dict_list = load_database(reference_database)
 			
 	return query_kmer_dict, query_kmer_dict_list, reference_kmer_dict, reference_kmer_dict_list
 
+	
+#Function for acquiring input file paths and returning them as a list
+#Used in parse_query_and_reference_inputs
+def create_file_list(input_file_or_dir):
+	#If the input is a directory, list the full path of each file in the dir.
+	if os.path.isdir(input_file_or_dir):
+		input_list = os.listdir(input_file_or_dir)
+		for i in range(len(input_list)):
+			input_list[i] = os.path.normpath(input_file_or_dir+"/"+input_list[i])
+	#If the input is a file, the expectation is that the file has a path to the desired input files.
+	else:
+		input_list = []
+		with open(input_file_or_dir, 'r') as input_fh:
+			for line in input_fh:
+				input_list.append(line.strip())
+				
+	return input_list
+
+
+#Function that strips all extensions, no matter how many, from a path, then returns the last part of that path (after the final '/')
+def get_input_base_name(filepath):
+	
+	#Get the last part of the path
+	current_base_name = os.path.basename(filepath)
+	previous_base_name = os.path.basename(filepath)
+	
+	#Remove extension if present. Leaves a naked string alone.
+	current_base_name = os.path.splitext(current_base_name)[0]
+	
+	#Keep going until there's no more extensions to remove; never happens if there was no ext. in the first place
+	while current_base_name != previous_base_name:
+		previous_base_name = os.path.splitext(previous_base_name)[0]
+		current_base_name = os.path.splitext(current_base_name)[0]
+		
+	return current_base_name
+	
+
 #Function for collecting input sequences and producing file names for partial outputs
-#TODO - get the names worked out to use the created directories well.
-def parse_query_and_reference_inputs(output_root_directory, extension, same_inputs, virus, query_database, query_input, query_genomes, query_proteins, query_hmms, reference_database, reference_input, reference_genomes, reference_proteins, reference_hmms):
+def parse_query_and_reference_inputs(output_root_directory, same_inputs, virus, query_database, query_input, query_genomes, query_proteins, query_hmms, reference_database, reference_input, reference_genomes, reference_proteins, reference_hmms):
 	# Get files from the query and reference lists and then
 	# create a dictionary with resulting filenames and a list with dictionary keys
 	# The structure of the dictionary is:
-	# original_query, proteins, hmms, filtered_hmms
+	# original_query, proteins, hmms, filtered_hmms 
 	# ------------------------------------------------------
 	# First parse the query:
 	query_list = []
@@ -1019,39 +1047,46 @@ def parse_query_and_reference_inputs(output_root_directory, extension, same_inpu
 		if query_database != None:
 			pass
 		else:
-			with open(query_input, 'r') as query_input_fh:
-				for line in query_input_fh:
-					query_list.append(line.strip())
+			query_list = create_file_list(query_input)
+			
+			#Previously this was being done repeatedly for each genome.
+			if query_hmms != None:
+				query_protein_list = create_file_list(query_proteins)
+			
 			for index, query in enumerate(query_list):
 				query_name = str(Path(query).name)
-				if extension != None:
-					query_name = query_name.replace(extension, "")
+					
+				#Query base name will be the file name without the last extension and without parent directories.
+				query_base_name = get_input_base_name(query_name)
+				
+				predicted_protein_name = os.path.normpath(output_root_directory + "/proteins/" + query_base_name + '.faa')
+				raw_hmm_name = os.path.normpath(output_root_directory + "/hmms/" + query_base_name + '.faa.hmm')
+				filtered_hmm_name = os.path.normpath(output_root_directory + "/filtered_hmms/" + query_base_name + '.faa.hmm.filt')
+					
 				if query_hmms != None:
-					query_protein_list = []
-					with open(query_proteins, 'r') as query_protein_fh:
-						for line in query_protein_fh:
-							query_protein_list.append(line.strip())
-					query_file_names[query_name] = [None, query_protein_list[index], query, output_root_directory + "/filtered_hmms/" + query + '.filt']
+					query_file_names[query_name] = [None, query_protein_list[index], query, filtered_hmm_name]
 				elif query_proteins != None:
-					query_file_names[query_name] = [None, query, output_root_directory + "/hmms/" + query + '.hmm', output_root_directory + "/filtered_hmms/" + query + '.hmm.filt']
+					query_file_names[query_name] = [None, query, raw_hmm_name, filtered_hmm_name]
 				elif query_genomes != None:
-					query_file_names[query_name] = [query, output_root_directory + "/proteins/" + query + '.faa', output_root_directory + "/hmms/" + query + '.faa.hmm', output_root_directory + "/filtered_hmms/" + query + '.faa.hmm.filt']
+					query_file_names[query_name] = [query, predicted_protein_name, raw_hmm_name, filtered_hmm_name]
 	# For viral genomes
 	else:
 		if query_database != None:
 			pass
 		else:
-			with open(query_input, 'r') as query_input_fh:
-				for line in query_input_fh:
-					query_list.append(line.strip())
+			query_list = create_file_list(query_input)
+						
 			for index, query in enumerate(query_list):
 				query_name = str(Path(query).name)
-				if extension != None:
-					query_name = query_name.replace(extension, "")
+				
+				query_base_name = get_input_base_name(query_name)
+				
+				predicted_protein_name = os.path.normpath(output_root_directory + "/proteins/" + query_base_name + '.faa')
+				
 				if query_proteins != None:
 					query_file_names[query_name] = [None, query]
 				elif query_genomes != None:
-					query_file_names[query_name] = [query, output_root_directory + "/proteins/" + query + '.faa']
+					query_file_names[query_name] = [query, predicted_protein_name]
 
 	# Then parse the references:
 	reference_list = []
@@ -1064,48 +1099,52 @@ def parse_query_and_reference_inputs(output_root_directory, extension, same_inpu
 			if reference_database != None:
 				pass
 			else:
-				with open(reference_input, 'r') as reference_input_fh:
-					for line in reference_input_fh:
-						reference_list.append(line.strip())
+				reference_list = create_file_list(reference_input)
+				
+				if reference_hmms != None:
+					reference_list = create_file_list(reference_proteins)
+				
 				for index, reference in enumerate(reference_list):
 					reference_name = str(Path(reference).name)
-					if extension != None:
-						reference_name = reference_name.replace(extension, "")
-					if reference_hmms != None:
-						reference_protein_list = []
-						with open(reference_proteins, 'r') as reference_protein_fh:
-							for line in reference_protein_fh:
-								reference_protein_list.append(line.strip())
-						reference_file_names[reference_name] = [None, reference_protein_list[index], reference, output_root_directory + "/filtered_hmms/" + reference + '.filt']
+						
+					reference_base_name = get_input_base_name(reference_name)
+					
+					predicted_protein_name = os.path.normpath(output_root_directory + "/proteins/" + reference_base_name + '.faa')
+					raw_hmm_name = os.path.normpath(output_root_directory + "/hmms/" + reference_base_name + '.faa.hmm')
+					filtered_hmm_name = os.path.normpath(output_root_directory + "/filtered_hmms/" + reference_base_name + '.faa.hmm.filt')
+						
+					if reference_hmms != None:					
+						reference_file_names[reference_name] = [None, reference_protein_list[index], reference, filtered_hmm_name]
 					elif reference_proteins != None:
-						reference_file_names[reference_name] = [None, reference, output_root_directory + "/hmms/" + reference + '.hmm', output_root_directory + "/filtered_hmms/" + reference + '.hmm.filt']
+						reference_file_names[reference_name] = [None, reference, raw_hmm_name, filtered_hmm_name]
 					elif query_genomes != None:
-						reference_file_names[reference_name] = [reference, output_root_directory + "/proteins/" + reference + '.faa', output_root_directory + "/hmms/" + reference + '.faa.hmm', output_root_directory + "/filtered_hmms/" + reference + '.faa.hmm.filt']
+						reference_file_names[reference_name] = [reference, predicted_protein_name, raw_hmm_name, filtered_hmm_name]
 		# For viral genomes
 		else:
 			if reference_database != None:
 				pass
 			else:
-				with open(reference_input, 'r') as reference_input_fh:
-					for line in reference_input_fh:
-						reference_list.append(line.strip())
+				reference_list = create_file_list(reference_input)
+				
 				for index, reference in enumerate(reference_list):
 					reference_name = str(Path(reference).name)
-					if extension != None:
-						reference_name = reference_name.replace(extension, "")
+						
+					reference_base_name = get_input_base_name(reference_name)
+					predicted_protein_name = os.path.normpath(output_root_directory + "/proteins/" + reference_base_name + '.faa')
+						
 					if reference_proteins != None:
 						reference_file_names[reference_name] = [None, reference]
 					elif query_genomes != None:
-						reference_file_names[reference_name] = [reference, output_root_directory + "/proteins/" + reference + '.faa']
+						reference_file_names[reference_name] = [reference, predicted_protein_name]
 	
 	return 	query_list, query_file_names, reference_list, reference_file_names
+
 	
 #Function that creates dictionaries containing genomes, protein markers, and kmer lists for inputs. 
 #Predicts proteins from input genomes with prodigal if needed. 
 #Runs hmmer on proteins, predicted or input, if needed.
 #Returns hmmer results if hmms are input.
-#TODO - writing the hmms and filtered hmms in the same folder as the user inputs is not a good idea. These should each have their own folders.
-def produce_kmer_dictionaries(_output_root_directory, threads, same_inputs, virus, query_kmer_dict, query_list, query_genomes, query_proteins, query_hmms, reference_kmer_dict, reference_list, reference_genomes, reference_proteins, reference_hmms, keep):
+def produce_kmer_dictionaries(_output_root_directory, threads, same_inputs, virus, query_kmer_dict, query_list, query_genomes, query_proteins, query_hmms, reference_kmer_dict, reference_list, reference_genomes, reference_proteins, reference_hmms, keep, query_file_names, reference_file_names):
 	# Pre-index queries
 	
 	#We need this repeatedly in many functs.
@@ -1154,6 +1193,12 @@ def produce_kmer_dictionaries(_output_root_directory, threads, same_inputs, viru
 			finally:
 				pool.close()
 				pool.join()
+			#
+			#
+			#
+			#
+			#
+			#TODO these kmer_extracts should take the results of the filter funct, or get names earlier
 			print("Extracting kmers from query proteins...")
 			# Finding kmers for all queries
 			query_information = []
@@ -1279,32 +1324,47 @@ def produce_kmer_dictionaries(_output_root_directory, threads, same_inputs, viru
 	
 	#reference_kmer_dict will be empty if same inputs is true.
 	return query_kmer_dict, reference_kmer_dict
-		
+
+	
 #Function for writing compressed database outputs for quick start in subsequent runs
-def save_databases(output_root_directory, same_inputs, query_database, query_input, reference_database, reference_input):
+def save_databases(output_root_directory, same_inputs, query_database, query_input, reference_database, reference_input, query_kmer_dict, reference_kmer_dict):
+	
+	#If these are supplied as a directory, we want to make sure the name is kept regardless of the ending '/' that's likely with an autocomplete.
+	if query_input.endswith("/"):
+		query_input = query_input[:-1]
+	if reference_input.endswith("/"):
+		reference_input = reference_input[:-1]
+	
+	
+	query_base_name = os.path.basename(os.path.splitext(query_input)[0])
+	reference_base_name = os.path.basename(os.path.splitext(reference_input)[0])
+	
 	if same_inputs == True and query_database == None:
 		print("Saving pre-indexed database...")
-		query_database_name = output_root_directory + "/databases/" + query_input + '.db.gz'
+		query_database_name = output_root_directory + "/databases/" + query_base_name + '.db.gz'
 		with gzip.open(query_database_name, 'wb') as database_handle:
 			pickle.dump(query_kmer_dict, database_handle, protocol=4)
 	if same_inputs == False and query_database == None and reference_database == None:
 		print("Saving pre-indexed databases...")
-		query_database_name = output_root_directory + "/databases/" + query_input + '.db.gz'
-		reference_database_name = output_root_directory + "/databases/" + reference_input + '.db.gz'
+		query_database_name = output_root_directory + "/databases/" + query_base_name + '.db.gz'
+		reference_database_name = output_root_directory + "/databases/" + reference_base_name + '.db.gz'
 		with gzip.open(query_database_name, 'wb') as database_handle:
 			pickle.dump(query_kmer_dict, database_handle, protocol=4)
 		with gzip.open(reference_database_name, 'wb') as database_handle:
 			pickle.dump(reference_kmer_dict, database_handle, protocol=4)
 	elif same_inputs == False and query_database == None:
 		print("Saving pre-indexed query database...")
-		query_database_name = output_root_directory + "/databases/" + query_input + '.db.gz'
+		query_database_name = output_root_directory + "/databases/" + query_base_name + '.db.gz'
 		with gzip.open(query_database_name, 'wb') as database_handle:
 			pickle.dump(query_kmer_dict, database_handle, protocol=4)
 	elif same_inputs == False and reference_database == None:
 		print("Saving pre-indexed reference database...")
-		reference_database_name = output_root_directory + "/databases/" + reference_input + '.db.gz'
+		reference_database_name = output_root_directory + "/databases/" + reference_base_name + '.db.gz'
 		with gzip.open(reference_database_name, 'wb') as database_handle:
-			pickle.dump(reference_kmer_dict, database_handle, protocol=4)	
+			pickle.dump(reference_kmer_dict, database_handle, protocol=4)
+				
+	return None
+
 	
 #Function for calculating pairwise jaccard distances between the kmers of input genomes.
 def calculate_jaccard_distances(threads, temporary_working_directory, same_inputs, virus, query_kmer_dict, reference_kmer_dict):
@@ -1360,6 +1420,7 @@ def calculate_jaccard_distances(threads, temporary_working_directory, same_input
 				pool.join()
 
 	return Fraction_Results
+
 	
 #Function for concatenating the jaccard distance outputs from calculate_jaccard_distances' per-genome temp outputs.
 def merge_outputs(Fraction_Results, output, output_root_directory):
@@ -1372,7 +1433,7 @@ def merge_outputs(Fraction_Results, output, output_root_directory):
 
 			
 """---3.0 Main Function---"""
-#TODO - We should make a FastAAI output folder, and inside that folder localize hmms, filtered hmms, database, and output as their own sub-folders.
+#Main function calls options, prepares output directories, 
 def main():
 
 	#Get options block
@@ -1394,7 +1455,6 @@ def main():
 	reference_database = args.reference_database
 	output = args.output
 	output_directory = args.directory
-	extension = args.extension
 	index_db = args.index_db
 	threads = args.threads
 	keep = args.keep
@@ -1433,7 +1493,7 @@ def main():
 	
 	#Nothing meaningful happens before this point, so we shouldn't start the timer until here.
 	print("FastAAI started on {}".format(datetime.datetime.now()))
-	
+		
 	#Check to see if the user supplied a database of pre-indexed genomes and proteins from a previous kaai run; ensures database validity; loads database if present
 	# ------------------------------------------------------
 	query_kmer_dict, query_kmer_dict_list, reference_kmer_dict, reference_kmer_dict_list = check_and_load_database(same_inputs, query_database, reference_database)
@@ -1442,32 +1502,33 @@ def main():
 	
 	#Collect sequence identifiers, file names as needed from inputs
 	# ------------------------------------------------------
-	query_list, query_file_names, reference_list, reference_file_names = parse_query_and_reference_inputs(output_root_directory, extension, same_inputs, virus, query_database, query_input, query_genomes, query_proteins, query_hmms, reference_database, reference_input, reference_genomes, reference_proteins, reference_hmms)
+	query_list, query_file_names, reference_list, reference_file_names = parse_query_and_reference_inputs(output_root_directory, same_inputs, virus, query_database, query_input, query_genomes, query_proteins, query_hmms, reference_database, reference_input, reference_genomes, reference_proteins, reference_hmms)
 	# ------------------------------------------------------
 
 	
-	
 	# Pre-index and store databases
 	# ------------------------------------------------------
-	query_kmer_dict, reference_kmer_dict = produce_kmer_dictionaries(output_root_directory, threads, same_inputs, virus, query_kmer_dict, query_list, query_genomes, query_proteins, query_hmms, reference_kmer_dict, reference_list, reference_genomes, reference_proteins, reference_hmms, keep)
+	query_kmer_dict, reference_kmer_dict = produce_kmer_dictionaries(output_root_directory, threads, same_inputs, virus, query_kmer_dict, query_list, query_genomes, query_proteins, query_hmms, reference_kmer_dict, reference_list, reference_genomes, reference_proteins, reference_hmms, keep, query_file_names, reference_file_names)
 	# ------------------------------------------------------
 	
 	
 	# Create or database(s) and compress it(them)
 	# ------------------------------------------------------
-	save_databases(output_root_directory, same_inputs, query_database, query_input, reference_database, reference_input)
+	save_databases(output_root_directory, same_inputs, query_database, query_input, reference_database, reference_input, query_kmer_dict, reference_kmer_dict)
 	# ------------------------------------------------------
 	
 	
 	# Calculate Jaccard distances
 	# ------------------------------------------------------
-	#Intentionally results in an early exit from FastAAI; this is just for producing the databases that can be later used for faster restarts
 	if index_db == True:
+		#Intentionally results in an early exit from FastAAI; this is just for producing the databases that can be later used for faster restarts
 		print("Finished pre-indexing databases.")
 		print("Next time you can run the program using only these files with --qd and(or) --rd.")
 	else:
+		#Calculates genome-genome jaccard similarity based on shared kmer sets
 		Fraction_Results = calculate_jaccard_distances(threads, temporary_working_directory, same_inputs, virus, query_kmer_dict, reference_kmer_dict)
 	# ------------------------------------------------------
+	
 	
 	# Merge results into a single output
 	# ------------------------------------------------------
@@ -1475,8 +1536,6 @@ def main():
 	
 	#Creating the DB and stopping there is also a correct finish, so we want this to print no matter how we got here.
 	print("FastAAI finishied correctly on {}".format(datetime.datetime.now()))
-	# ------------------------------------------------------
-	# If comparing viral genomes
 
 
 	
