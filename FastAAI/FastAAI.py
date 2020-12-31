@@ -24,6 +24,7 @@ from pathlib import Path
 from sys import argv
 from sys import exit
 from functools import partial
+import time
 
 
 ################################################################################
@@ -469,7 +470,6 @@ def single_kaai_parser(arguments):
     temporal_output = temporal_folder / temporal_file
     
     query_scg_list = np.array(list(query_kmer_dictionary[query_id].keys()))
-
     with open(temporal_output, 'w') as out_file:
         #for target_genome, scg_ids in query_kmer_dictionary.items():
         for target_genome in list(query_kmer_dictionary.keys())[skip_first_n:]:
@@ -581,7 +581,7 @@ def double_kaai_parser(arguments):
     temporal_folder = Path(str(temporal_folder.name))
     temporal_file = Path(query_id).name + '.faai.temp'
     temporal_output = temporal_folder / temporal_file
-    
+
     query_scg_list = np.array(list(query_kmer_dictionary[query_id].keys()))
 
     with open(temporal_output, 'w') as out_file:
@@ -1281,6 +1281,7 @@ def main():
     # Merge results into a single output
     # ------------------------------------------------------
         print("Merging results...")
+        print(temporal_working_directory)
         with open(output, 'w') as outfile:
             for file in Fraction_Results:
                 with open(file) as Temp:
