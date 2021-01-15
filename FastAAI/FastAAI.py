@@ -761,6 +761,12 @@ def main():
                                             help='Extension to remove from original filename, e.g. ".fasta"')
     additional_input_options.add_argument('-i', '--index', dest='index_db', action='store_true', required=False, 
                                             help='Only index and store databases, i.e., do not perform comparisons.')
+    additional_input_options.add_argument('-a', '--all-vs-all', dest='all_vs_all',
+                                    action='store_true', required=False,
+                                    help='Perform all-vs-all comparison, using only query input.')
+    additional_input_options.add_argument('--input-paths', dest='input_paths',
+                                    action='store_true', required=False,
+                                    help='The input files are direct paths to the data, not lists of files.')
     misc_options = parser.add_argument_group('Miscellaneous options')
     misc_options.add_argument('--virus', dest='virus', action='store_true', required=False,
                                 help='Toggle virus-virus comparisons. Use only with viral genomes or proteins.')
@@ -772,13 +778,19 @@ def main():
     args = parser.parse_args()
 
     query_genomes = args.query_genomes
-    reference_genomes = args.reference_genomes
     query_proteins = args.query_proteins
-    reference_proteins = args.reference_proteins
     query_hmms = args.query_hmms
-    reference_hmms = args.reference_hmms
     query_database = args.query_database
-    reference_database = args.reference_database
+    if args.all_vs_all:
+        reference_genomes = query_genomes
+        reference_proteins = query_proteins
+        reference_hmms = query_hmms
+        reference_database = query_database
+    else:
+        reference_genomes = args.reference_genomes
+        reference_proteins = args.reference_proteins
+        reference_hmms = args.reference_hmms
+        reference_database = args.reference_database
     output = args.output
     if output == None:
         output == "kaai_comparisons.txt"
@@ -787,6 +799,7 @@ def main():
     threads = args.threads
     keep = args.keep
     virus = args.virus
+    input_paths = args.input_paths
 
     print("FastAAI started on {}".format(datetime.datetime.now()))
     # Check user input
@@ -867,68 +880,80 @@ def main():
     query_kmer_dict_list = []
     reference_kmer_dict = None
     reference_kmer_dict_list = []
+    query_database_files = []
+    reference_database_files = []
+    if query_database != None:
+        if input_paths == True:
+            query_database_files.append(query_database)
+        else:
+            with open(query_database) as database_files:
+                for db_location in database_files:
+                    query_database_files.append(db_location)
+    if reference_database != None:
+        if input_paths == True:
+            reference_database_files.append(reference_database)
+        else:
+            with open(reference_database) as database_files:
+                for db_location in database_files:
+                    reference_database_files.append(db_location)
+
     # If starting from database and query == reference
     if same_inputs == True:
         if query_database != None:
-            with open(query_database) as query_database_files:
-                for db_location in query_database_files:
-                    if Path(db_location.strip()).is_file():
-                        with gzip.open(db_location.strip(), 'rb') as database_handle:
-                            temp_dict = pickle.load(database_handle)
-                            if isinstance(temp_dict,dict):
-                                query_kmer_dict_list.append(temp_dict)
-								#Carlos, this line serves no purpose but does take a bunch of time and mem.
-                                #print(query_kmer_dict_list)
-                            else:
-                                exit("One of the database files appear to have the wrong format. Please provide a correctly formated databases.")
-            query_kmer_dict = merge_dicts(query_kmer_dict_list)
+            for db_location in query_database_files:
+                if Path(db_location.strip()).is_file():
+                    with gzip.open(db_location.strip(), 'rb') as database_handle:
+                        temp_dict = pickle.load(database_handle)
+                        if isinstance(temp_dict,dict):
+                            query_kmer_dict_list.append(temp_dict)
+                                                            #Carlos, this line serves no purpose but does take a bunch of time and mem.
+                            #print(query_kmer_dict_list)
+                        else:
+                            exit("One of the database files appear to have the wrong format. Please provide a correctly formated database.")
+        query_kmer_dict = merge_dicts(query_kmer_dict_list)
     else:
     # If the inputs are not the same:
         # If query and ref are provided
         if query_database != None and reference_database != None:
-            with open(query_database, 'r') as query_database_files:
-                for db_location in query_database_files:
-                    if Path(db_location.strip()).is_file():
-                        with gzip.open(db_location.strip(), 'rb') as database_handle:
-                            temp_dict = pickle.load(database_handle)
-                            if isinstance(temp_dict,dict):
-                                query_kmer_dict_list.append(temp_dict)
-                            else:
-                                exit("One of the query database files appear to have the wrong format. Please provide a correctly formated databases.")
+            for db_location in query_database_files:
+                if Path(db_location.strip()).is_file():
+                    with gzip.open(db_location.strip(), 'rb') as database_handle:
+                        temp_dict = pickle.load(database_handle)
+                        if isinstance(temp_dict,dict):
+                            query_kmer_dict_list.append(temp_dict)
+                        else:
+                            exit("One of the query database files appear to have the wrong format. Please provide a correctly formated database.")
             query_kmer_dict = merge_dicts(query_kmer_dict_list)
-            with open(reference_database) as reference_database_files:
-                for db_location in reference_database_files:
-                    if Path(db_location.strip()).is_file():
-                        with gzip.open(db_location.strip(), 'rb') as database_handle:
-                            temp_dict = pickle.load(database_handle)
-                            if isinstance(temp_dict,dict):
-                                reference_kmer_dict_list.append(temp_dict)
-                            else:
-                                exit("One of the reference database files appear to have the wrong format. Please provide a correctly formated databases.")
+            for db_location in reference_database_files:
+                if Path(db_location.strip()).is_file():
+                    with gzip.open(db_location.strip(), 'rb') as database_handle:
+                        temp_dict = pickle.load(database_handle)
+                        if isinstance(temp_dict,dict):
+                            reference_kmer_dict_list.append(temp_dict)
+                        else:
+                            exit("One of the reference database files appear to have the wrong format. Please provide a correctly formated database.")
             reference_kmer_dict = merge_dicts(reference_kmer_dict_list)
         # If only the query has a db
         elif query_database != None and reference_database == None:
-            with open(query_database) as query_database_files:
-                for db_location in query_database_files:
-                    if Path(db_location.strip()).is_file():
-                        with gzip.open(db_location.strip(), 'rb') as database_handle:
-                            temp_dict = pickle.load(database_handle)
-                            if isinstance(temp_dict,dict):
-                                query_kmer_dict_list.append(temp_dict)
-                            else:
-                                exit("One of the query database files appear to have the wrong format. Please provide a correctly formated databases.")
+            for db_location in query_database_files:
+                if Path(db_location.strip()).is_file():
+                    with gzip.open(db_location.strip(), 'rb') as database_handle:
+                        temp_dict = pickle.load(database_handle)
+                        if isinstance(temp_dict,dict):
+                            query_kmer_dict_list.append(temp_dict)
+                        else:
+                            exit("One of the query database files appear to have the wrong format. Please provide a correctly formated database.")
             query_kmer_dict = merge_dicts(query_kmer_dict_list)
         # If only the reference has a db
         elif query_database == None and reference_database != None:
-            with open(reference_database) as reference_database_files:
-                for db_location in reference_database_files:
-                    if Path(db_location.strip()).is_file():
-                        with gzip.open(db_location.strip(), 'rb') as database_handle:
-                            temp_dict = pickle.load(database_handle)
-                            if isinstance(temp_dict,dict):
-                                reference_kmer_dict_list.append(temp_dict)
-                            else:
-                                exit("One of the reference database files appear to have the wrong format. Please provide a correctly formated databases.")
+            for db_location in reference_database_files:
+                if Path(db_location.strip()).is_file():
+                    with gzip.open(db_location.strip(), 'rb') as database_handle:
+                        temp_dict = pickle.load(database_handle)
+                        if isinstance(temp_dict,dict):
+                            reference_kmer_dict_list.append(temp_dict)
+                        else:
+                            exit("One of the reference database files appear to have the wrong format. Please provide a correctly formated database.")
             reference_kmer_dict = merge_dicts(reference_kmer_dict_list)
     # ------------------------------------------------------
 
@@ -945,9 +970,12 @@ def main():
         if query_database != None:
             pass
         else:
-            with open(query_input, 'r') as query_input_fh:
-                for line in query_input_fh:
-                    query_list.append(line.strip())
+            if input_paths == True:
+              query_list.append(query_input)
+            else:
+                with open(query_input, 'r') as query_input_fh:
+                    for line in query_input_fh:
+                        query_list.append(line.strip())
             for index, query in enumerate(query_list):
                 query_name = str(Path(query).name)
                 if extension != None:
@@ -967,9 +995,12 @@ def main():
         if query_database != None:
             pass
         else:
-            with open(query_input, 'r') as query_input_fh:
-                for line in query_input_fh:
-                    query_list.append(line.strip())
+            if input_paths == True:
+              query_list.append(query_input)
+            else:
+                with open(query_input, 'r') as query_input_fh:
+                    for line in query_input_fh:
+                        query_list.append(line.strip())
             for index, query in enumerate(query_list):
                 query_name = str(Path(query).name)
                 if extension != None:
@@ -990,9 +1021,12 @@ def main():
             if reference_database != None:
                 pass
             else:
-                with open(reference_input, 'r') as reference_input_fh:
-                    for line in reference_input_fh:
-                        reference_list.append(line.strip())
+                if input_paths == True:
+                    reference_list.append(reference_input)
+                else:
+                    with open(reference_input, 'r') as reference_input_fh:
+                        for line in reference_input_fh:
+                            reference_list.append(line.strip())
                 for index, reference in enumerate(reference_list):
                     reference_name = str(Path(reference).name)
                     if extension != None:
@@ -1012,9 +1046,12 @@ def main():
             if reference_database != None:
                 pass
             else:
-                with open(reference_input, 'r') as reference_input_fh:
-                    for line in reference_input_fh:
-                        reference_list.append(line.strip())
+                if input_paths == True:
+                    reference_list.append(reference_input)
+                else:
+                    with open(reference_input, 'r') as reference_input_fh:
+                        for line in reference_input_fh:
+                            reference_list.append(line.strip())
                 for index, reference in enumerate(reference_list):
                     reference_name = str(Path(reference).name)
                     if extension != None:
