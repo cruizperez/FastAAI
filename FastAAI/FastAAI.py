@@ -910,7 +910,7 @@ def main():
                             #print(query_kmer_dict_list)
                         else:
                             exit("One of the database files appear to have the wrong format. Please provide a correctly formated database.")
-        query_kmer_dict = merge_dicts(query_kmer_dict_list)
+            query_kmer_dict = merge_dicts(query_kmer_dict_list)
     else:
     # If the inputs are not the same:
         # If query and ref are provided
