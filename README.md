@@ -21,7 +21,7 @@ Coming soon
 - Programs:
    - [HMMER](http://hmmer.org/) >= 3.1
 - Python >=3.6,<3.9
-- Python Modules:
+- Base Python Modules:
    - argparse
    - datetime
    - pathlib
@@ -32,9 +32,10 @@ Coming soon
    - textwrap
    - pickle
    - tempfile
-   - numpy
    - sys
    - functools
+- Additional Python Modules:
+   - numpy
 
 ## Installation
 ### Conda Installation
@@ -79,4 +80,5 @@ This should take care of most of the requirements except for Aspera Connect and 
 
 
 ## License
+
 See LICENSE
