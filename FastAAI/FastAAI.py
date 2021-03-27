@@ -226,7 +226,7 @@ def kmer_extract(input_files):
             line = line.strip().split()
             protein_name = line[0]
             model_name = line[3]
-            score = line[8]
+            score = float(line[8])
             if model_name in positive_matches:
                 if score > positive_matches[model_name][1]:
                     positive_matches[model_name] = [protein_name, score]
