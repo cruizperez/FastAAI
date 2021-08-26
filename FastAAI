@@ -804,7 +804,7 @@ class input_file:
 					self.protein_count += 1
 					self.best_hits_kmers[current_prot] = kmer_set
 				#Select the best hit accession for this protein and just record that. We do not care about the names of the proteins.
-				current_prot = line[1:].strip().split(" # ")[0]
+				current_prot = line[1:].strip().split(" ")[0]
 				if current_prot in self.best_hits:
 					current_prot = self.best_hits[current_prot]
 					is_besthit = True
