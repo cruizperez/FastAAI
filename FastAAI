@@ -222,14 +222,6 @@ class fastaai_database:
 			os.remove(child_db)
 
 	def add_genomes_first(self, accession, kmer_dict):
-	
-		#
-		#Shoot... gotta pass the args
-		
-		#for file in prepared_files:
-		#	if accession in file.best_hits_kmers:
-		#		kmer_lists.append((genome_index[file.basename], file.best_hits_kmers[accession].tobytes()))
-	
 		kmer_lists = []
 		for genome in kmer_dict:
 			kmer_lists.append((genome, kmer_dict[genome].tobytes()))
@@ -250,16 +242,16 @@ class fastaai_database:
 		
 			
 	def load_genome_index(self):		
-		#self.gak = None
-		#self.genome_index = None
-		#Go from index to name
-		#self.reverse_genome_index = None
-		
 		self.genome_index = {}
 		self.reverse_genome_index = {}
 		self.protein_counts_by_genome = {}
 		
 		sql_command = ("SELECT genome, gen_id, protein_count FROM genome_index")
+		
+		#Break resist.
+		gen = None
+		id = None
+		protein_count = None
 		
 		for result in self.cursor.execute(sql_command).fetchall():
 			gen = result[0]
@@ -690,6 +682,7 @@ class input_file:
 		if self.protein is None:
 			print(self.name, "wasn't a declared as a protein! I can't make this into an HMM!")
 		else:
+		
 			folder = Path(self.output + "/hmms")
 						
 			hmm_output = folder / (self.basename + '.hmm')
@@ -703,7 +696,6 @@ class input_file:
 			protein_parser = agnostic_reader(self.protein)
 			
 			#File was a gzip; decompress it to an intermediate file and then run prodigal; delete after
-			#print("unzipping input...")
 			#Keeps track of \n chars in the protein sequences.
 			line_ct = 0
 			midpoint = open(intermediate, "w")
@@ -741,7 +733,6 @@ class input_file:
 					#print("The protein will be skipped, and FastAAI will continue without it.", file = sys.stderr)
 			
 			midpoint.close()
-			
 			
 			#Should locate the DBs regardless of path.
 			script_path = Path(__file__)
@@ -797,6 +788,7 @@ class input_file:
 		prot = agnostic_reader(self.protein)
 		
 		for line in prot:
+			
 			if line.startswith(">"):
 				if len(current_seq) > 0:
 					kmer_set = unique_kmers(current_seq, 4)
@@ -828,13 +820,9 @@ class input_file:
 		self.status = "finished preprocessing"
 	
 	def preprocess(self):
-		time_format = "%d/%m/%Y %H:%M:%S"
-		
 		#There's no advancement stage for protein and HMM
 		if self.status == 'genome':
-		
-			timer = datetime.datetime.now()
-			start_time = timer.strftime(time_format)
+			start_time = curtime()
 			#report = True
 			if self.start_time is None:
 				self.start_time = start_time
@@ -846,8 +834,7 @@ class input_file:
 			
 			
 		if self.status == 'protein':
-			timer = datetime.datetime.now()
-			start_time = timer.strftime(time_format)
+			start_time = curtime()
 			#report = True
 			if self.start_time is None:
 				self.start_time = start_time
@@ -858,8 +845,7 @@ class input_file:
 			self.protein_to_hmm()
 			
 		if self.status == 'protein and hmm':
-			timer = datetime.datetime.now()
-			start_time = timer.strftime(time_format)
+			start_time = curtime()
 			
 			if self.start_time is None:
 				self.start_time = start_time
@@ -868,8 +854,7 @@ class input_file:
 			
 		#Add an end time if either genome -> protein -> HMM or protein -> HMM happened.
 		if self.start_time is not None:
-			timer = datetime.datetime.now()
-			end_time = timer.strftime(time_format)
+			end_time = curtime()
 			self.end_time = end_time
 		else:
 			#Start was protein+HMM. There was no runtime, and intitial state is p+hmm
@@ -927,6 +912,10 @@ Read directories, advance files to hmms as needed.
 def do_advance(input_file_object):
 	input_file_object.preprocess()
 	return input_file_object
+
+def initialize_preproc(index):
+	global kmer_index
+	kmer_index = index
 	
 #Function which takes an input list
 def advance_inputs(genomes = None, proteins = None, hmms = None, genomes_file = None, proteins_file = None, hmms_file = None, output = "FastAAI", threads = 1, verbose = False, db_name = ""):
@@ -953,6 +942,9 @@ def advance_inputs(genomes = None, proteins = None, hmms = None, genomes_file = 
 		fh = agnostic_reader(proteins_file)
 		
 		for line in fh:
+			#GOTOGOTO
+			print(line)
+		
 			clean = line.strip()
 			if not os.path.exists(clean):
 				print("I can't find file", clean, "Are you sure this file exists and can be found from your current directory using the path you supplied in the input file?")
@@ -1048,15 +1040,17 @@ def advance_inputs(genomes = None, proteins = None, hmms = None, genomes_file = 
 	#progress bar - possible dangerous use of the return to line start sequence.
 		try:
 			percentage = 0
-			print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Genome ' + str(count) + " of " + str(total_counts) + ')')
+			sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Genome ' + str(count) + " of " + str(total_counts) + ') at ' + curtime()+"\n")
+			sys.stdout.flush()
 		except:
 			#It's not really a big deal if the progress bar cannot be printed.
 			pass
 	
-	pool = multiprocessing.Pool(threads)
-	
 	results = []
-		
+	
+	kmer_index_ = create_kmer_index()
+	pool = multiprocessing.Pool(threads, initializer=initialize_preproc, initargs = (kmer_index_,))
+	
 	for res in pool.imap(do_advance, inputs):
 		results.append(res)
 		if verbose:
@@ -1067,7 +1061,9 @@ def advance_inputs(genomes = None, proteins = None, hmms = None, genomes_file = 
 				if int(percentage/2) > last_pct or partition == total_partitions:
 					sys.stdout.write('\033[A')
 					sys.stdout.flush()
-					print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Genome ' + str(count) + " of " + str(total_counts) + ')')
+					sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Genome ' + str(count) + " of " + str(total_counts) + ') at ' + curtime()+"\n")
+					sys.stdout.flush()
+					
 				last_pct = int(percentage/2)
 			except:
 				#It's not really a big deal if the progress bar cannot be printed.
@@ -1078,10 +1074,7 @@ def advance_inputs(genomes = None, proteins = None, hmms = None, genomes_file = 
 	
 	inputs = results
 
-	#Log the run.
-	time_format = "%d/%m/%Y %H:%M:%S"
-	timer = datetime.datetime.now()
-	log_time = timer.strftime(time_format)
+	log_time = curtime()
 	
 	if os.path.exists(os.path.normpath(output + "/logs/" + os.path.splitext(os.path.basename(db_name))[0] + "_preprocessing_log.txt")):
 		preproc_log = open(os.path.normpath(output + "/logs/" + os.path.splitext(os.path.basename(db_name))[0] + "_preprocessing_log.txt"), "a")
@@ -1260,9 +1253,6 @@ def add_inputs(output_path, parent_path, existing_index, threads, verbose, prep_
 	print("")
 	print("FastAAI is formatting your files to be saved to your database.")
 	
-	global kmer_index
-	kmer_index = create_kmer_index()
-	
 	#Let's push this to the inputs section.
 	inputs = advance_inputs(genomes = genomes, proteins = proteins, hmms = hmms, genomes_file = gf, proteins_file = pf, hmms_file = hf, output = output_path, threads = threads, verbose = verbose, db_name = db_name)
 	
@@ -1274,8 +1264,6 @@ def add_inputs(output_path, parent_path, existing_index, threads, verbose, prep_
 	#global genome_index
 	genome_index = {}
 	next_index = 0
-	
-	time_format = "%d/%m/%Y %H:%M:%S"
 	
 	#Build upon the genome indexing of an existing DB
 	if existing_index is not None:
@@ -1297,7 +1285,9 @@ def add_inputs(output_path, parent_path, existing_index, threads, verbose, prep_
 	
 	#unique_accessions = set()
 	for file in inputs:
+		
 		genome = file.basename
+		
 		#Collect all of the accessions actually found. Will usually be 122 for reasonably sized datasets.
 		#unique_accessions = unique_accessions.union(set(file.best_hits.values()))
 		#Avoid adding duplicate genomes
@@ -1350,7 +1340,7 @@ def add_inputs(output_path, parent_path, existing_index, threads, verbose, prep_
 		child_args.append([accession, name, child_path, parent_path, genomes_per_acc[accession], genome_index])
 			
 	print("")
-	print("Formatting data to add to database...")
+	print("Formatting data to add to database at", curtime())
 	
 	#Add partition, output, parent DB data.
 	if not os.path.exists(os.path.normpath(output_path+"/temp")):
@@ -1365,10 +1355,10 @@ def add_inputs(output_path, parent_path, existing_index, threads, verbose, prep_
 		count = 0
 		total_counts = len(child_args)
 		try:
-			timer = datetime.datetime.now()
-			log_time = timer.strftime(time_format)
+			log_time = curtime()
 			percentage = (count/total_counts)*100
-			print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' )')
+			sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' ) at ' + curtime() + "\n")
+			sys.stdout.flush()
 		except:
 			#It's not really a big deal if the progress bar cannot be printed.
 			pass
@@ -1389,11 +1379,11 @@ def add_inputs(output_path, parent_path, existing_index, threads, verbose, prep_
 			count += 1
 			try:
 				percentage = (count/total_counts)*100
-				timer = datetime.datetime.now()
-				log_time = timer.strftime(time_format)
+				log_time = curtime()
 				sys.stdout.write('\033[A')
 				sys.stdout.flush()
-				print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' ) done at '+ log_time)
+				sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at '+ curtime() + " )\n")
+				sys.stdout.flush()
 			except:
 				#It's not really a big deal if the progress bar cannot be printed.
 				pass
@@ -1411,7 +1401,9 @@ def add_inputs(output_path, parent_path, existing_index, threads, verbose, prep_
 		total_counts = len(child_args)
 		try:
 			percentage = (count/total_counts)*100
-			print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' )')
+			
+			("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at '+ curtime() + " )\n")
+			sys.stdout.flush()		
 		except:
 			#It's not really a big deal if the progress bar cannot be printed.
 			pass
@@ -1427,11 +1419,11 @@ def add_inputs(output_path, parent_path, existing_index, threads, verbose, prep_
 			count += 1
 			try:
 				percentage = (count/total_counts)*100
-				timer = datetime.datetime.now()
-				log_time = timer.strftime(time_format)
+				log_time = curtime()
 				sys.stdout.write('\033[A')
 				sys.stdout.flush()
-				print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' ) done at '+ log_time)
+				sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at '+ curtime() + " )\n")
+				sys.stdout.flush()
 			except:
 				#It's not really a big deal if the progress bar cannot be printed.
 				pass
@@ -1960,9 +1952,6 @@ def finish_jaccards(args):
 	
 #Here's the DB SQL querying functionality/limited version.
 def do_query_vs_target_sql(query, target, threads, output, verbose, do_stdev):
-	if not os.path.exists(os.path.normpath(output+"/temp")):
-		os.mkdir(os.path.normpath(output+"/temp"))
-	
 	#Save the file paths.
 	query_name, target_name = query, target
 	
@@ -1996,8 +1985,9 @@ def do_query_vs_target_sql(query, target, threads, output, verbose, do_stdev):
 	#Go through tables and load data.
 	query_acc_kmers = defaultdict(dict)
 	
-	print("")
-	print("Loading query data...")
+	sys.stdout.write("\n")
+	sys.stdout.write("Loading query data at " + curtime() + " ...\n")
+	sys.stdout.flush()
 	
 	for tab_idx in cleaned_tables:
 		table = tab_idx[0]
@@ -2007,13 +1997,17 @@ def do_query_vs_target_sql(query, target, threads, output, verbose, do_stdev):
 		
 	query.close_connection()
 		
+		
+	sys.stdout.write("\n")
+	sys.stdout.write("Loading target data at " + curtime() + " ...\n")
+	sys.stdout.flush()
+		
 	target = fastaai_database(target_name)
 	target.activate_connection()
 	target.load_genome_index()
 	target.load_accessions()
 	target.close_connection()
 		
-	#database, file.basename, file.best_hits_kmers, os.path.normpath(output+"/temp")		
 	query_args = []
 	for genome in query_acc_kmers:
 		query_args.append((target, query.reverse_genome_index[genome], query_acc_kmers[genome], os.path.normpath(output+"/results")))
@@ -2029,8 +2023,6 @@ def do_query_vs_target_sql(query, target, threads, output, verbose, do_stdev):
 	target_kmer_cts = {}
 	
 	target_len = len(target.gak)
-	print("")
-	print("Loading target data...")
 	
 	for accession in np.intersect1d(detected_query_accs, target.accessions):
 		target_kmer_cts[accession] = np.zeros(target_len, dtype = np.int16)
@@ -2048,21 +2040,22 @@ def do_query_vs_target_sql(query, target, threads, output, verbose, do_stdev):
 	target.gak = None
 	
 	#Should just load the stuff then straightforward sql
-	print("")
-	print("FastAAI will search", query_length, "query genomes against", target_length, "target genomes.")
-	print("")
+	sys.stdout.write("\n")
+	sys.stdout.write("FastAAI will search "+ str(query_length) + " query genomes against " + str(target_length) + " target genomes.\n")
+	sys.stdout.write("\n")
 	
 	count = 0
 	total = len(query_args)
 	
-	print("Beginning AAI calculation")
+	sys.stdout.write("Beginning AAI calculation at " + curtime())
 	
 	if verbose:
 		print("")
 	#progress bar - possible dangerous use of the return to line start sequence.
 		try:
 			percentage = 0
-			print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')')
+			sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')\n')
+			sys.stdout.flush()
 			last_pct = 0
 		except:
 			#It's not really a big deal if the progress bar cannot be printed.
@@ -2083,8 +2076,8 @@ def do_query_vs_target_sql(query, target, threads, output, verbose, do_stdev):
 						percentage = (count/total)*100
 						if int(percentage/2) > last_pct or count == total:
 							sys.stdout.write('\033[A')
+							sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')\n')
 							sys.stdout.flush()
-							print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')')
 						last_pct = int(percentage/2)
 					except:
 						#It's not really a big deal if the progress bar cannot be printed.
@@ -2104,8 +2097,8 @@ def do_query_vs_target_sql(query, target, threads, output, verbose, do_stdev):
 						percentage = (count/total)*100
 						if int(percentage/2) > last_pct or count == total:
 							sys.stdout.write('\033[A')
+							sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')\n')
 							sys.stdout.flush()
-							print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')')
 						last_pct = int(percentage/2)
 					except:
 						#It's not really a big deal if the progress bar cannot be printed.
@@ -2130,8 +2123,8 @@ def do_query_vs_target_sql(query, target, threads, output, verbose, do_stdev):
 					percentage = (count/total)*100
 					if int(percentage/2) > last_pct or count == total:
 						sys.stdout.write('\033[A')
+						sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+' )\n')
 						sys.stdout.flush()
-						print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')')
 					last_pct = int(percentage/2)
 				except:
 					#It's not really a big deal if the progress bar cannot be printed.
@@ -2365,6 +2358,18 @@ def db_query(query, target, verbose, output, threads, do_stdev, precision, memor
 	if not os.path.exists(query):
 		print("Query database not found. Exiting FastAAI")
 		sys.exit()
+		
+	#status = "exists"
+	query_ok = assess_db(query)
+	target_ok = assess_db(target)
+	
+	if query_ok != "exists":
+		print("Query database improperly formatted. Exiting FastAAI")
+		sys.exit()
+		
+	if target_ok != "exists":
+		print("Query database improperly formatted. Exiting FastAAI")
+		sys.exit()
 	
 	#Check if the database is querying against itself.
 	if target is None or query is None:
@@ -2531,7 +2536,8 @@ def sql_query(genomes, proteins, hmms, gf, pf, hf, db_name, output, threads, ver
 	#progress bar - possible dangerous use of the return to line start sequence.
 		try:
 			percentage = 0
-			print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')')
+			sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+' )\n')
+			sys.stdout.flush()
 			last_pct = 0
 		except:
 			#It's not really a big deal if the progress bar cannot be printed.
@@ -2562,8 +2568,8 @@ def sql_query(genomes, proteins, hmms, gf, pf, hf, db_name, output, threads, ver
 						percentage = (count/total)*100
 						if int(percentage/2) > last_pct or count == total:
 							sys.stdout.write('\033[A')
+							sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+' )\n')
 							sys.stdout.flush()
-							print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')')
 						last_pct = int(percentage/2)
 					except:
 						#It's not really a big deal if the progress bar cannot be printed.
@@ -2592,7 +2598,8 @@ def sql_query(genomes, proteins, hmms, gf, pf, hf, db_name, output, threads, ver
 						if int(percentage/2) > last_pct or count == total:
 							sys.stdout.write('\033[A')
 							sys.stdout.flush()
-							print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')')
+							sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+' )\n')
+							sys.stdout.flush
 						last_pct = int(percentage/2)
 					except:
 						#It's not really a big deal if the progress bar cannot be printed.
@@ -2624,7 +2631,8 @@ def sql_query(genomes, proteins, hmms, gf, pf, hf, db_name, output, threads, ver
 					if int(percentage/2) > last_pct or count == total:
 						sys.stdout.write('\033[A')
 						sys.stdout.flush()
-						print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')')
+						sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at '+ curtime() + " )\n")
+						sys.stdout.flush()							
 					last_pct = int(percentage/2)
 				except:
 					#It's not really a big deal if the progress bar cannot be printed.
@@ -2635,6 +2643,8 @@ def sql_query(genomes, proteins, hmms, gf, pf, hf, db_name, output, threads, ver
 		print("-"*100)
 		print("")
 		
+	if os.path.exists(output+"/temp"):
+		os.rmdir(output+"/temp")
 		
 	print("FastAAI query complete! Results at:", os.path.normpath(output + "/results"))
 	return None
@@ -2701,16 +2711,18 @@ def merge_db_opts():
 	
 	parser.add_argument('--threads',      dest = 'threads', type=int, default = 1, help = 'The number of processors to use. Default 1.')
 
-	
 	args, unknown = parser.parse_known_args()
 	
 	return parser, args
 	
 def merge_db(recipient, donors, verbose, threads):
 	#Prettier on the CLI
-	print("")
+
+	if donors is None or recipient is None:
+		print("Either donor or target not given. FastAAI is exiting.")
+		return None
 	
-	time_format = "%d/%m/%Y %H:%M:%S"
+	print("")
 	
 	donors = donors.split(",")
 	valid_donors = []
@@ -2844,7 +2856,8 @@ def merge_db(recipient, donors, verbose, threads):
 		total_counts = len(acc_args)
 		try:
 			percentage = (count/total_counts)*100
-			print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' )')
+			sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at ' + curtime() + " )\n")
+			sys.stdout.flush()			
 		except:
 			#It's not really a big deal if the progress bar cannot be printed.
 			pass
@@ -2866,11 +2879,11 @@ def merge_db(recipient, donors, verbose, threads):
 			count += 1
 			try:
 				percentage = (count/total_counts)*100
-				timer = datetime.datetime.now()
-				log_time = timer.strftime(time_format)
+				log_time = curtime()
 				sys.stdout.write('\033[A')
 				sys.stdout.flush()
-				print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' ) done at '+ log_time)
+				sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at ' + curtime() + " )\n")
+				sys.stdout.flush()			
 			except:
 				#It's not really a big deal if the progress bar cannot be printed.
 				pass
@@ -2888,7 +2901,8 @@ def merge_db(recipient, donors, verbose, threads):
 		total_counts = len(acc_args)
 		try:
 			percentage = (count/total_counts)*100
-			print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' )')
+			sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at ' + curtime() + " )\n")
+			sys.stdout.flush()
 		except:
 			#It's not really a big deal if the progress bar cannot be printed.
 			pass
@@ -2916,11 +2930,11 @@ def merge_db(recipient, donors, verbose, threads):
 			count += 1
 			try:
 				percentage = (count/total_counts)*100
-				timer = datetime.datetime.now()
-				log_time = timer.strftime(time_format)
+				log_time = curtime()
 				sys.stdout.write('\033[A')
 				sys.stdout.flush()
-				print("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' ) done at '+ log_time)
+				sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at ' + curtime() + " )\n")
+				sys.stdout.flush()
 			except:
 				#It's not really a big deal if the progress bar cannot be printed.
 				pass
@@ -2933,7 +2947,7 @@ def merge_db(recipient, donors, verbose, threads):
 		recipient.connection.execute("VACUUM")
 		recipient.connection.close()
 	'''
-	print("Databases merged!")
+	print("\nDatabases merged!")
 	
 	return None
 	
@@ -3369,15 +3383,21 @@ def main():
 		print("")
 		print("    I couldn't find the module you specified. Please select one of the following modules:")
 		print("")
+		print("------------------------------------------- Quick Usage Options -------------------------------------------")
+		print("")
+		print("    single_query |" + " Quickly query ONE query genome against ONE target genome")
+		print("    multi_query  |" + " Create a query DB and a target DB, then calculate query vs. target AAI")
+		print("    aai_index    |" + " Create a database from multiple genomes and do an all vs. all AAI index of the genomes")
+		print("")
 		print("-------------------------------------- Database Construction Options --------------------------------------")
 		print("")
 		print("    build_db     |" + " Create or add to a FastAAI database from genomes, proteins, or proteins and HMMs")
-		print("    merge_db       |" + " Add the contents of one FastAAI DB to another")
+		print("    merge_db     |" + " Add the contents of one FastAAI DB to another")
 		print("")
 		print("---------------------------------------------- Query Options ----------------------------------------------")
 		print("")
-		print("    sql_query |" + " Query a genome or protein (one or many) against an existing FastAAI database")
-		print("    db_query     |" + " Query the genomes in one FastAAI database against another FastAAI database")
+		print("    simple_query |" + " Query a genome or protein (one or many) against an existing FastAAI database")
+		print("    db_query     |" + " Query the genomes in one FastAAI database against the genomes in another FastAAI database")
 		print("")
 		print("-----------------------------------------------------------------------------------------------------------")
 		print("")
@@ -3462,7 +3482,6 @@ def main():
 		if len(sys.argv) < 3:
 			print(parser.print_help())
 			sys.exit()
-			
 			
 		query = opts.query
 		target = opts.target
@@ -3614,4 +3633,4 @@ def main():
 if __name__ == "__main__":
 	main()
 
-
+	
