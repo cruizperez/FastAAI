@@ -34,8 +34,14 @@ import random
 def convert_array(bytestring):
 	return np.frombuffer(bytestring, dtype = np.int32)
 
-def convert_float_array(bytestring):
-	return np.frombuffer(bytestring, dtype = glob_prec)
+def convert_float_array_16(bytestring):
+	return np.frombuffer(bytestring, dtype = np.float16)
+
+def convert_float_array_32(bytestring):
+	return np.frombuffer(bytestring, dtype = np.float32)
+	
+def convert_float_array_64(bytestring):
+	return np.frombuffer(bytestring, dtype = np.float64)
 
 	
 #Iterator for agnostic reader
@@ -169,6 +175,8 @@ class fastaai_database:
 			self.child = None
 				
 	def add_child_to_parent(self, acc, child_db, remove = True, selected_kmers = None, genomes_too = False, just_genomes = False, update_gak = False):
+		accession_index = generate_accessions_index()
+		
 		create_command = "CREATE TABLE IF NOT EXISTS " + acc + " (kmer INTEGER PRIMARY KEY, genomes array)"
 		
 		if not just_genomes:
@@ -482,7 +490,7 @@ class child_database:
 	
 #Holds partial results for calculating AAI.
 class calculation_database:
-	def __init__(self, path):
+	def __init__(self, path, precision):
 		#open SQL db and load in
 		
 		self.path = path
@@ -495,7 +503,7 @@ class calculation_database:
 
 		self.verbosity = False
 		
-		#self.precision = precision
+		self.precision = precision
 		
 	#Open an SQL connection
 	def activate_connection(self):
@@ -503,7 +511,12 @@ class calculation_database:
 		##sqlite3.register_adapter(np.ndarray, adapt_array)
 
 		# Converts TEXT to np.array when selecting
-		sqlite3.register_converter("array", convert_float_array)
+		if self.precision == "low":
+			sqlite3.register_converter("array", convert_float_array_16)
+		if self.precision == "med":
+			sqlite3.register_converter("array", convert_float_array_32)
+		if self.precision == "high":
+			sqlite3.register_converter("array", convert_float_array_64)
 		
 		self.connection = sqlite3.connect(self.path, detect_types=sqlite3.PARSE_DECLTYPES)
 		self.cursor = self.connection.cursor()
@@ -599,27 +612,46 @@ class input_file:
 			
 			intermediate = folder / (self.basename + '_genome_intermediate.fasta')
 			
+			#total_bases = 0
+			
 			genome_parser = agnostic_reader(self.genome)
 			
 			if genome_parser.is_gz:
 				#File was a gzip; decompress it to an intermediate file and then run prodigal; delete after
 				#print("unzipping input...")
 				midpoint = open(intermediate, "w")
-					
+				#Count input bases and write an unzipped file for prodigal's sake.
 				for line in genome_parser:
+					#if not line.startswith(">"):
+					#	total_bases += len(line.strip())
 					midpoint.write(line)
 					
 				midpoint.close()
-				genome_parser.close()
+				
 			else:
 				#File is already unzipped, just point to it
-				genome_parser.close()
 				intermediate = self.genome
+				#Count input bases
+				#for line in genome_parser:
+				#	if not line.startswith(">"):
+				#		total_bases += len(line.strip())
 			
-			subprocess.call(["prodigal", "-i", str(intermediate), "-a", str(output_11), "-p", "meta", "-q", "-o", str(temp_output)])
-							
-			subprocess.call(["prodigal", "-i", str(intermediate), "-a", str(output_4), "-p", "meta", "-g", "4", "-q", "-o", str(temp_output)])
-							
+			genome_parser.close()
+			'''
+			A chunk of code originally indended to match GTDBtk's table selection criteria.
+			if total_bases > 100000:
+				#training mode
+				subprocess.call(["prodigal", "-i", str(intermediate), "-a", str(output_11), "-q", "-o", str(temp_output)])				
+				subprocess.call(["prodigal", "-i", str(intermediate), "-a", str(output_4), "-g", "4", "-q", "-o", str(temp_output)])
+			else:
+				#Metagenome mode for very short genomes.
+				subprocess.call(["prodigal", "-i", str(intermediate), "-p", "meta", "-a", str(output_11), "-q", "-o", str(temp_output)])				
+				subprocess.call(["prodigal", "-i", str(intermediate), "-p", "meta", "-a", str(output_4), "-g", "4", "-q", "-o", str(temp_output)])
+			'''
+			
+			subprocess.call(["prodigal", "-i", str(intermediate), "-a", str(output_11), "-q", "-o", str(temp_output)])				
+			subprocess.call(["prodigal", "-i", str(intermediate), "-a", str(output_4), "-g", "4", "-q", "-o", str(temp_output)])
+			
 			#We can get rid of the temp file immediately, we won't be using it
 			temp_output.unlink()
 			if genome_parser.is_gz:
@@ -642,7 +674,6 @@ class input_file:
 						continue
 					else:
 						length_11 += len(line.strip())
-			
 			
 			#Select the winning translation table and remove the other. Open the winner.
 			if (length_4 / length_11) >= 1.1:
@@ -1694,11 +1725,11 @@ def do_query_vs_target_aai_only(query_name, target_name, threads, output, precis
 	
 	print("AAI calculations complete. Formatting results for writing.")
 	
-	global glob_prec
-	glob_prec = jacc_precision
+	#global glob_prec
+	#glob_prec = jacc_precision
 	
 	rdb_name = os.path.normpath(output+"/temp/aai_calc_db.db")
-	rdb = calculation_database(rdb_name)
+	rdb = calculation_database(rdb_name, precision)
 	rdb.activate_connection()
 	rdb.initialize_database()
 	
@@ -1722,7 +1753,7 @@ def do_query_vs_target_aai_only(query_name, target_name, threads, output, precis
 	
 	#Now we split the query genomes into chunk and have threads process each chunk in parallel with its respective shared prot counts.
 	query_chunks = split_indicies(query_len, threads)
-	query_args = [([rdb_name], query_chunks[i], output, query, target) for i in range(0, threads)]
+	query_args = [([rdb_name], query_chunks[i], output, query, target, precision) for i in range(0, threads)]
 	
 	print("Results formatted. Writing results starting at", curtime())
 	
@@ -1849,7 +1880,7 @@ def accession_worker(in_queue, out_queue, query, target, qlen, tlen, prec):
 	return None
 	
 def finish_jaccards(args):
-	partial_dbs, my_query_genomes, output, query, target = args[0], args[1], args[2], args[3] ,args[4]
+	partial_dbs, my_query_genomes, output, query, target, prec = args[0], args[1], args[2], args[3] ,args[4], args[5]
 	#Load protein counts
 	#for each genome, query each partial and sum matching genomes, then divide by shared counts.
 	
@@ -1898,7 +1929,7 @@ def finish_jaccards(args):
 	activated_DBs = []
 	idx = 0
 	for db in partial_dbs:
-		activated_DBs.append(calculation_database(db))
+		activated_DBs.append(calculation_database(db, prec))
 		activated_DBs[idx].activate_connection()
 		idx += 1
 
@@ -1955,15 +1986,6 @@ def do_query_vs_target_sql(query, target, threads, output, verbose, do_stdev):
 	#Save the file paths.
 	query_name, target_name = query, target
 	
-	global accession_index
-	accession_index = generate_accessions_index()
-	
-	global accession_inverter
-	accession_inverter = {}
-	for acc in accession_index:
-		sql_friendly_accession = acc.replace(".", "_")
-		accession_inverter[accession_index[acc]] = sql_friendly_accession
-	
 	query = fastaai_database(query_name)
 	query.activate_connection()
 	query.load_genome_index()
@@ -2019,7 +2041,7 @@ def do_query_vs_target_sql(query, target, threads, output, verbose, do_stdev):
 	del query
 	del query_acc_kmers
 	
-	global target_kmer_cts
+	#global target_kmer_cts
 	target_kmer_cts = {}
 	
 	target_len = len(target.gak)
@@ -2030,7 +2052,7 @@ def do_query_vs_target_sql(query, target, threads, output, verbose, do_stdev):
 			if accession in target.gak[g]:
 				target_kmer_cts[accession][g] = target.gak[g][accession]
 	
-	global target_protein_counts
+	#global target_protein_counts
 	target_protein_counts = np.zeros(target_len, dtype = np.int16)
 	for g in target.gak:
 		target_protein_counts[g] = len(target.gak[g])
@@ -2060,62 +2082,12 @@ def do_query_vs_target_sql(query, target, threads, output, verbose, do_stdev):
 		except:
 			#It's not really a big deal if the progress bar cannot be printed.
 			pass
-	
-	#If parallelized, do parallel
-	if threads > 1:
 
-		pool = multiprocessing.Pool(threads)
-		
-		#Process as we go.
-		if do_stdev:
-			for file in pool.imap(do_sql_query, query_args):
-				if verbose:
-				#progress bar - possible dangerous use of the return to line start sequence.
-					try:
-						count += 1
-						percentage = (count/total)*100
-						if int(percentage/2) > last_pct or count == total:
-							sys.stdout.write('\033[A')
-							sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')\n')
-							sys.stdout.flush()
-						last_pct = int(percentage/2)
-					except:
-						#It's not really a big deal if the progress bar cannot be printed.
-						pass
-			
-			pool.close()
-			pool.join()
+	pool = multiprocessing.Pool(threads, initializer = sql_query_thread_starter, initargs = (target_kmer_cts, target_protein_counts,))
 
-		else:
-		
-			for file in pool.imap(do_sql_query_no_SD, query_args):
-
-				if verbose:
-				#progress bar - possible dangerous use of the return to line start sequence.
-					try:
-						count += 1
-						percentage = (count/total)*100
-						if int(percentage/2) > last_pct or count == total:
-							sys.stdout.write('\033[A')
-							sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')\n')
-							sys.stdout.flush()
-						last_pct = int(percentage/2)
-					except:
-						#It's not really a big deal if the progress bar cannot be printed.
-						pass
-			
-			pool.close()
-			pool.join()
-			
-	#If not parallelized, don't bother setting up the parallel process.
-	else:
-		for file in query_args:
-			
-			if do_stdev:
-				result = do_sql_query(file)
-			else:
-				result = do_sql_query_no_SD(file)
-
+	#Process as we go.
+	if do_stdev:
+		for file in pool.imap(do_sql_query, query_args):
 			if verbose:
 			#progress bar - possible dangerous use of the return to line start sequence.
 				try:
@@ -2123,12 +2095,35 @@ def do_query_vs_target_sql(query, target, threads, output, verbose, do_stdev):
 					percentage = (count/total)*100
 					if int(percentage/2) > last_pct or count == total:
 						sys.stdout.write('\033[A')
-						sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+' )\n')
+						sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')\n')
 						sys.stdout.flush()
 					last_pct = int(percentage/2)
 				except:
 					#It's not really a big deal if the progress bar cannot be printed.
 					pass
+		
+		pool.close()
+		pool.join()
+	else:
+	
+		for file in pool.imap(do_sql_query_no_SD, query_args):
+			
+			if verbose:
+				#progress bar - possible dangerous use of the return to line start sequence.
+				try:
+					count += 1
+					percentage = (count/total)*100
+					if int(percentage/2) > last_pct or count == total:
+						sys.stdout.write('\033[A')
+						sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+')\n')
+						sys.stdout.flush()
+					last_pct = int(percentage/2)
+				except:
+					#It's not really a big deal if the progress bar cannot be printed.
+					pass
+		
+		pool.close()
+		pool.join()
 	
 	print("AAI calculation complete! Results at:", os.path.normpath(output+"/results"))
 
@@ -2136,6 +2131,8 @@ def do_query_vs_target_sql(query, target, threads, output, verbose, do_stdev):
 	
 #This can also take the genomes-first formatted prots in the DB and search them memory-efficiently, if not time efficiently.
 def do_sql_query(args):
+	kmer_index = create_kmer_index()
+	accession_index = generate_accessions_index()
 	#database, file.basename, file.best_hits_kmers, os.path.normpath(output+"/temp")
 	database, name, acc_kmers, temp_out = args[0],args[1],args[2],args[3]
 	
@@ -2211,6 +2208,8 @@ def do_sql_query(args):
 
 #This can also take the genomes-first formatted prots in the DB and search them memory-efficiently, if not time efficiently.
 def do_sql_query_no_SD(args):
+	kmer_index = create_kmer_index()
+	accession_index = generate_accessions_index()
 	#database, file.basename, file.best_hits_kmers, os.path.normpath(output+"/temp")
 	database, name, acc_kmers, temp_out = args[0],args[1],args[2],args[3]
 	
@@ -2440,6 +2439,13 @@ def sql_query_opts():
 	
 	return parser, args
 
+def sql_query_thread_starter(kmer_cts, protein_cts):
+	global target_kmer_cts 
+	global target_protein_counts
+	target_kmer_cts = kmer_cts
+	target_protein_counts = protein_cts
+
+	
 def sql_query(genomes, proteins, hmms, gf, pf, hf, db_name, output, threads, verbose, do_stdev):
 	
 	if not os.path.exists(db_name):
@@ -2455,9 +2461,8 @@ def sql_query(genomes, proteins, hmms, gf, pf, hf, db_name, output, threads, ver
 	#If something failed, we stop.
 	if start is None:
 		sys.exit()
+
 	
-	global counter_
-	counter_ = 0
 	
 	good_to_go = prepare_directories(output, start, "query")
 	
@@ -2465,8 +2470,9 @@ def sql_query(genomes, proteins, hmms, gf, pf, hf, db_name, output, threads, ver
 		print("Exiting FastAAI")
 		sys.exit()
 	
-	global kmer_index
-	kmer_index = create_kmer_index()
+	#global kmer_index
+	#kmer_index = create_kmer_index()
+	
 	
 	print("")
 	print("Preparing inputs for querying...")
@@ -2497,15 +2503,15 @@ def sql_query(genomes, proteins, hmms, gf, pf, hf, db_name, output, threads, ver
 	database.load_accessions()
 	database.close_connection()
 	
-	formatted_dataset = [(database, file.basename, file.best_hits_kmers, os.path.normpath(output+"/results")) for file in prepared_files] 
+	#formatted_dataset = [(database, file.basename, file.best_hits_kmers, os.path.normpath(output+"/results")) for file in prepared_files] 
 	
-	global accession_index
+	#global accession_index
 	accession_index = generate_accessions_index()
 	
 	#Translate to indicies.
 	query_accessions_detected = [accession_index[a] for a in query_accessions_detected]
 	
-	global target_kmer_cts
+	#global target_kmer_cts
 	target_kmer_cts = {}
 	
 	for accession in np.intersect1d(database.accessions, query_accessions_detected):
@@ -2514,12 +2520,14 @@ def sql_query(genomes, proteins, hmms, gf, pf, hf, db_name, output, threads, ver
 			if accession in database.gak[g]:
 				target_kmer_cts[accession][g] = database.gak[g][accession]
 	
-	global target_protein_counts
+	#global target_protein_counts
 	target_protein_counts = np.zeros(len(database.gak), dtype = np.int16)
 	for g in database.gak:
 		target_protein_counts[g] = len(database.gak[g])
 	
 	database.gak = None
+	
+	formatted_dataset = [(database, file.basename, file.best_hits_kmers, os.path.normpath(output+"/results")) for file in prepared_files] 
 	
 	if verbose:
 		print("")
@@ -2530,6 +2538,9 @@ def sql_query(genomes, proteins, hmms, gf, pf, hf, db_name, output, threads, ver
 	total = len(formatted_dataset)
 	
 	print("Beginning AAI calculation")
+	
+	#globals to pass... target_kmer_cts target_protein_counts
+	#Just remake these in the procs. kmer_index accession_index
 	
 	if verbose:
 		print("")
@@ -2544,84 +2555,49 @@ def sql_query(genomes, proteins, hmms, gf, pf, hf, db_name, output, threads, ver
 			pass
 	
 	#If parallelized, do parallel
-	if threads > 1:
 
-		pool = multiprocessing.Pool(threads)
+	pool = multiprocessing.Pool(threads, initializer = sql_query_thread_starter, initargs = (target_kmer_cts, target_protein_counts,))
 		
-		#Process as we go.
-		if do_stdev:
-			for file in pool.imap(do_sql_query, formatted_dataset):
-				
-				'''
-				handle = open(file, "r")
-				
-				for line in handle:
-					final_result.write(line)
-					
-				handle.close()
-				os.remove(file)	
-				'''
-				if verbose:
-				#progress bar - possible dangerous use of the return to line start sequence.
-					try:
-						count += 1
-						percentage = (count/total)*100
-						if int(percentage/2) > last_pct or count == total:
-							sys.stdout.write('\033[A')
-							sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+' )\n')
-							sys.stdout.flush()
-						last_pct = int(percentage/2)
-					except:
-						#It's not really a big deal if the progress bar cannot be printed.
-						pass
+	#Process as we go.
+	if do_stdev:
+		for file in pool.imap(do_sql_query, formatted_dataset):
 			
-			pool.close()
-			pool.join()
-
-		else:
-		
-			for file in pool.imap(do_sql_query_no_SD, formatted_dataset):
-				'''
-				handle = open(file, "r")
-				
-				for line in handle:
-					final_result.write(line)
-					
-				handle.close()
-				os.remove(file)	
-				'''
-				if verbose:
-				#progress bar - possible dangerous use of the return to line start sequence.
-					try:
-						count += 1
-						percentage = (count/total)*100
-						if int(percentage/2) > last_pct or count == total:
-							sys.stdout.write('\033[A')
-							sys.stdout.flush()
-							sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+' )\n')
-							sys.stdout.flush
-						last_pct = int(percentage/2)
-					except:
-						#It's not really a big deal if the progress bar cannot be printed.
-						pass
+			'''
+			handle = open(file, "r")
 			
-			pool.close()
-			pool.join()
-			
-	#If not parallelized, don't bother setting up the parallel process.
-	else:
-		for file in formatted_dataset:
-			
-			if do_stdev:
-				result = do_sql_query(file)
-			else:
-				result = do_sql_query_no_SD(file)
-			'''	
-			handle = open(result)
 			for line in handle:
 				final_result.write(line)
+				
 			handle.close()
-			os.remove(result)
+			os.remove(file)	
+			'''
+			if verbose:
+			#progress bar - possible dangerous use of the return to line start sequence.
+				try:
+					count += 1
+					percentage = (count/total)*100
+					if int(percentage/2) > last_pct or count == total:
+						sys.stdout.write('\033[A')
+						sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+' )\n')
+						sys.stdout.flush()
+					last_pct = int(percentage/2)
+				except:
+					#It's not really a big deal if the progress bar cannot be printed.
+					pass
+		
+		pool.close()
+		pool.join()
+	else:
+
+		for file in pool.imap(do_sql_query_no_SD, formatted_dataset):
+			'''
+			handle = open(file, "r")
+			
+			for line in handle:
+				final_result.write(line)
+				
+			handle.close()
+			os.remove(file)	
 			'''
 			if verbose:
 			#progress bar - possible dangerous use of the return to line start sequence.
@@ -2631,12 +2607,15 @@ def sql_query(genomes, proteins, hmms, gf, pf, hf, db_name, output, threads, ver
 					if int(percentage/2) > last_pct or count == total:
 						sys.stdout.write('\033[A')
 						sys.stdout.flush()
-						sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at '+ curtime() + " )\n")
-						sys.stdout.flush()							
+						sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% (Query genome ' + str(count) + " of " + str(total) + ' done at '+curtime()+' )\n')
+						sys.stdout.flush
 					last_pct = int(percentage/2)
 				except:
 					#It's not really a big deal if the progress bar cannot be printed.
 					pass
+		
+		pool.close()
+		pool.join()
 	
 	if verbose:
 		print("")
@@ -2715,6 +2694,13 @@ def merge_db_opts():
 	
 	return parser, args
 	
+def merge_db_thread_starter(rev_index, per_db_accs):
+	global reverse_genome_indicies
+	global accs_per_db	
+	reverse_genome_indicies = rev_index
+	accs_per_db = per_db_accs
+	
+	
 def merge_db(recipient, donors, verbose, threads):
 	#Prettier on the CLI
 
@@ -2774,11 +2760,11 @@ def merge_db(recipient, donors, verbose, threads):
 	joint_genome_counts = {}
 	max_index = 0
 	#The idea here is to create a set of arrays whose values span the range of each donor's genomes and translate those into an overall list, in order.
-	global reverse_genome_indicies
-	reverse_genome_indicies = {}
 	
+	#global reverse_genome_indicies
+	reverse_genome_indices = {}
 	
-	global accs_per_db
+	#global accs_per_db
 	accs_per_db = {}
 		
 	#Load recipient data, if any.
@@ -2800,10 +2786,10 @@ def merge_db(recipient, donors, verbose, threads):
 		#So... the keys are the genome indicies of the recip. These... shouldn't need any updates. Only the donors need to match.
 		ct = 0
 		path = recipient.path
-		reverse_genome_indicies[path] = []
+		reverse_genome_indices[path] = []
 		for idx in sorted(recipient.genome_index.values()):
-			reverse_genome_indicies[path].append(idx)
-		reverse_genome_indicies[path] = np.array(reverse_genome_indicies[path], dtype = np.int32)
+			reverse_genome_indices[path].append(idx)
+		reverse_genome_indices[path] = np.array(reverse_genome_indices[path], dtype = np.int32)
 		recipient.genome_index = None
 	
 	#Donors should always exist, never be created.
@@ -2815,26 +2801,26 @@ def merge_db(recipient, donors, verbose, threads):
 		accs_per_db[d.path] = d.accessions
 		all_accessions = all_accessions.union(d.accessions)
 		d.accessions = None
-		reverse_genome_indicies[d.path] = []
+		reverse_genome_indices[d.path] = []
 		#Database construction indicates this should always be 0-COUNT
 		for g in sorted(d.genome_index.keys()):
 			if g not in joint_genome_index:
-				reverse_genome_indicies[d.path].append(max_index)
+				reverse_genome_indices[d.path].append(max_index)
 				joint_genome_index[g] = max_index
 				#Map the counts on.
 				joint_genome_counts[max_index] = d.protein_counts_by_genome[d.genome_index[g]]
 				#reverse_genome_index[max_index] = g
 				max_index += 1
 			else:
-				reverse_genome_indicies[d.path].append(joint_genome_index[g])
+				reverse_genome_indices[d.path].append(joint_genome_index[g])
 		#Make it an array, now
-		reverse_genome_indicies[d.path] = np.array(reverse_genome_indicies[d.path], dtype = np.int32)
+		reverse_genome_indices[d.path] = np.array(reverse_genome_indices[d.path], dtype = np.int32)
 		d.genome_index = None
 	
-	global accession_index
+	#global accession_index
 	accession_index = generate_accessions_index()
 	
-	global accession_inverter
+	#global accession_inverter
 	accession_inverter = {}
 	for acc in accession_index:
 		sql_friendly_accession = acc.replace(".", "_")
@@ -2864,7 +2850,7 @@ def merge_db(recipient, donors, verbose, threads):
 	
 	last_pct = 0
 	
-	pool = multiprocessing.Pool(threads)
+	pool = multiprocessing.Pool(threads, initializer=merge_db_thread_starter, initargs = (reverse_genome_indices, accs_per_db,))
 	
 	quiverfull = []
 	for result in pool.imap_unordered(pull_and_merge_accession, acc_args):
@@ -2952,6 +2938,14 @@ def merge_db(recipient, donors, verbose, threads):
 	return None
 	
 def pull_and_merge_accession(args):
+	accession_index = generate_accessions_index()
+	
+	#global accession_inverter
+	accession_inverter = {}
+	for acc in accession_index:
+		sql_friendly_accession = acc.replace(".", "_")
+		accession_inverter[accession_index[acc]] = sql_friendly_accession
+	
 	#joint_genome_index, accession_index, accession_inverter, accs_per_db are global already.
 	acc, donor_dbs, recipient = args[0], args[1], args[2]
 	
