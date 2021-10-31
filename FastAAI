@@ -583,6 +583,24 @@ class input_file:
 		self.initial_state = "protein+HMM"
 		
 		self.verbose = verbosity
+		
+		#r_scripts_loc = os.path.dirname(sys.modules['metapop'].__file__) + "/metapop_r/"
+		#"00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
+		self.hmm_path = None
+		try:
+			#Try to locate the data bundled as it would be with a pip/conda install.
+			script_path = os.path.dirname(sys.modules['fastAAI_HMM_models'].__file__)
+			hmm_complete_model = script_path + '/00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm'
+			self.hmm_path = str(hmm_complete_model)
+			#Check that the file exists or fail to the except.
+			fh = open(self.hmm_path)
+			fh.close()
+		except:
+			#Look in the same dir as the script; old method/MiGA friendly
+			script_path = Path(__file__)
+			script_dir = script_path.parent
+			hmm_complete_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
+			self.hmm_path = str(hmm_complete_model)
 	
 	#Functions for externally setting status and file paths of particular types
 	def set_genome(self, path):
@@ -2701,6 +2719,7 @@ def merge_db_thread_starter(rev_index, per_db_accs):
 	accs_per_db = per_db_accs
 	
 	
+	
 def merge_db(recipient, donors, verbose, threads):
 	#Prettier on the CLI
 
@@ -2828,111 +2847,109 @@ def merge_db(recipient, donors, verbose, threads):
 		
 	all_accessions = list(all_accessions)
 	
-	acc_args = [(acc, donor_dbs, recipient) for acc in all_accessions]
-	
-	if not os.path.exists("FastAAI_temp"):
-		os.mkdir("FastAAI_temp")
 	
 	print("")
 	print("Formatting data to add to database. Started at", curtime())
 	
-	if verbose:
-		print("")
-		count = 0
-		total_counts = len(acc_args)
-		try:
-			percentage = (count/total_counts)*100
-			sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at ' + curtime() + " )\n")
-			sys.stdout.flush()			
-		except:
-			#It's not really a big deal if the progress bar cannot be printed.
-			pass
+	temp_dir = tempfile.mkdtemp()
+	try:
+		acc_args = [(acc, donor_dbs, recipient, temp_dir) for acc in all_accessions]
 	
-	last_pct = 0
-	
-	pool = multiprocessing.Pool(threads, initializer=merge_db_thread_starter, initargs = (reverse_genome_indices, accs_per_db,))
-	
-	quiverfull = []
-	for result in pool.imap_unordered(pull_and_merge_accession, acc_args):
-		acc = result[0]
-		child = result[1]
-		#sub_gak = result[2]
-		
-		quiverfull.append([acc, child])
-		#gaks.extend(sub_gak)
-		
 		if verbose:
-			count += 1
+			print("")
+			count = 0
+			total_counts = len(acc_args)
 			try:
 				percentage = (count/total_counts)*100
-				log_time = curtime()
-				sys.stdout.write('\033[A')
-				sys.stdout.flush()
 				sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at ' + curtime() + " )\n")
 				sys.stdout.flush()			
 			except:
 				#It's not really a big deal if the progress bar cannot be printed.
 				pass
-	
-	pool.close()
-	pool.join()
-	
-	print("")
-	print("Adding data to final database. Started at", curtime())
-	
-	if verbose:
+		
+		last_pct = 0
+		
+		pool = multiprocessing.Pool(threads, initializer=merge_db_thread_starter, initargs = (reverse_genome_indices, accs_per_db,))
+		
+		quiverfull = []
+		for result in pool.imap_unordered(pull_and_merge_accession, acc_args):
+			acc = result[0]
+			child = result[1]
+			#sub_gak = result[2]
+			
+			quiverfull.append([acc, child])
+			#gaks.extend(sub_gak)
+			
+			if verbose:
+				count += 1
+				try:
+					percentage = (count/total_counts)*100
+					log_time = curtime()
+					sys.stdout.write('\033[A')
+					sys.stdout.flush()
+					sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at ' + curtime() + " )\n")
+					sys.stdout.flush()			
+				except:
+					#It's not really a big deal if the progress bar cannot be printed.
+					pass
+		
+		pool.close()
+		pool.join()
+		
 		print("")
-		
-		count = 0
-		total_counts = len(acc_args)
-		try:
-			percentage = (count/total_counts)*100
-			sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at ' + curtime() + " )\n")
-			sys.stdout.flush()
-		except:
-			#It's not really a big deal if the progress bar cannot be printed.
-			pass
-	
-	last_pct = 0
-	
-	recipient.activate_connection()
-	genome_list_update_sql = "INSERT OR REPLACE INTO genome_index VALUES (?, ?, ?)"
-	genome_reindex = []
-	for g in joint_genome_index:
-		genome_reindex.append((g, joint_genome_index[g], joint_genome_counts[joint_genome_index[g]]))
-		
-	recipient.cursor.executemany(genome_list_update_sql, genome_reindex)
-	recipient.connection.commit()
-	
-	del genome_reindex
-	
-	for result in quiverfull:
-		acc = result[0]
-		child = result[1]
-		
-		recipient.add_child_to_parent(acc, child, genomes_too = True, update_gak = True)
+		print("Adding data to final database. Started at", curtime())
 		
 		if verbose:
-			count += 1
+			print("")
+			
+			count = 0
+			total_counts = len(acc_args)
 			try:
 				percentage = (count/total_counts)*100
-				log_time = curtime()
-				sys.stdout.write('\033[A')
-				sys.stdout.flush()
 				sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at ' + curtime() + " )\n")
 				sys.stdout.flush()
 			except:
 				#It's not really a big deal if the progress bar cannot be printed.
 				pass
-	
-	os.rmdir("FastAAI_temp")
-	''' We're only ever increasing the DB size, so we don't actually need to vacuum it.
-	if recip_check != "created":
-		print("")
-		print("Cleaning up the database after the update. This may take a while.")
-		recipient.connection.execute("VACUUM")
-		recipient.connection.close()
-	'''
+		
+		last_pct = 0
+		
+		recipient.activate_connection()
+		genome_list_update_sql = "INSERT OR REPLACE INTO genome_index VALUES (?, ?, ?)"
+		genome_reindex = []
+		for g in joint_genome_index:
+			genome_reindex.append((g, joint_genome_index[g], joint_genome_counts[joint_genome_index[g]]))
+			
+		recipient.cursor.executemany(genome_list_update_sql, genome_reindex)
+		recipient.connection.commit()
+		
+		del genome_reindex
+		
+		for result in quiverfull:
+			acc = result[0]
+			child = result[1]
+			
+			recipient.add_child_to_parent(acc, child, genomes_too = True, update_gak = True)
+			
+			if verbose:
+				count += 1
+				try:
+					percentage = (count/total_counts)*100
+					log_time = curtime()
+					sys.stdout.write('\033[A')
+					sys.stdout.flush()
+					sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/2)).ljust(50)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(count) + " of " + str(total_counts) + ' done at ' + curtime() + " )\n")
+					sys.stdout.flush()
+				except:
+					#It's not really a big deal if the progress bar cannot be printed.
+					pass
+	except:
+		#Error
+		shutil.rmtree(temp_dir)
+	finally:
+		#Success
+		shutil.rmtree(temp_dir)
+		
 	print("\nDatabases merged!")
 	
 	return None
@@ -2947,14 +2964,14 @@ def pull_and_merge_accession(args):
 		accession_inverter[accession_index[acc]] = sql_friendly_accession
 	
 	#joint_genome_index, accession_index, accession_inverter, accs_per_db are global already.
-	acc, donor_dbs, recipient = args[0], args[1], args[2]
+	acc, donor_dbs, recipient, temp = args[0], args[1], args[2], args[3]
 	
 	acc_name = accession_inverter[acc]
 	acc_name_gens = acc_name + "_genomes"
 	
 	query_sql = "SELECT * FROM " + acc_name
 	
-	temp_db = fastaai_database("FastAAI_temp/"+acc_name+".db")
+	temp_db = fastaai_database(os.path.normpath(temp+"/"+acc_name+".db"))
 	temp_db.activate_connection()
 	
 	create_command = "CREATE TABLE IF NOT EXISTS " + acc_name + " (kmer INTEGER PRIMARY KEY, genomes array)"
