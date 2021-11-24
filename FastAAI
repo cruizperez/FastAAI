@@ -2702,6 +2702,8 @@ def merge_db_opts():
 			
 	parser.add_argument('-d', '--donors',      dest = 'donors',    default = None,   help =  'Comma-separated string of paths to one or more donor databases. The genomes FROM the donors will be added TO the recipient and the donors will be unaltered')
 
+	parser.add_argument('--donor_file',        dest = 'donor_file',    default = None,   help =  'Alternative way to supply donors. A file containing paths to the donor databases, 1 per line')
+
 	parser.add_argument('-r', '--recipient',   dest = 'recipient', default = None, help =  'Path to the recipient database. Any genomes FROM the donor database not already in the recipient will be added to this database.')	
 		
 	parser.add_argument('--verbose',           dest = 'verbose',   action='store_true', help = 'Print minor updates to console. Major updates are printed regardless.')
@@ -2720,16 +2722,23 @@ def merge_db_thread_starter(rev_index, per_db_accs):
 	
 	
 	
-def merge_db(recipient, donors, verbose, threads):
+def merge_db(recipient, donors, donor_file, verbose, threads):
 	#Prettier on the CLI
-
+	
+	if donor_file is not None:
+		fh = agnostic_reader(donor_file)
+		donors = [line.strip() for line in fh]
+		fh.close()
+	
 	if donors is None or recipient is None:
 		print("Either donor or target not given. FastAAI is exiting.")
 		return None
 	
 	print("")
 	
-	donors = donors.split(",")
+	if donor_file is None:
+		donors = donors.split(",")
+	
 	valid_donors = []
 	for d in donors:
 		if os.path.exists(d):
@@ -3454,10 +3463,11 @@ def main():
 			
 		recipient = opts.recipient
 		donors = opts.donors
+		donor_file = opts.donor_file
 		verbose = opts.verbose
 		threads = opts.threads
 		
-		merge_db(recipient, donors, verbose, threads)
+		merge_db(recipient, donors, donor_file, verbose, threads)
 		
 #################### Query files vs DB ########################	
 		
