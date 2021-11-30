@@ -2954,10 +2954,12 @@ def merge_db(recipient, donors, donor_file, verbose, threads):
 					pass
 	except:
 		#Error
-		shutil.rmtree(temp_dir)
+		if os.path.exists(temp_dir):
+			shutil.rmtree(temp_dir)
 	finally:
 		#Success
-		shutil.rmtree(temp_dir)
+		if os.path.exists(temp_dir):
+			shutil.rmtree(temp_dir)
 		
 	print("\nDatabases merged!")
 	
