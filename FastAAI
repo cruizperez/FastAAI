@@ -2171,9 +2171,19 @@ def do_sql_query(args):
 			#The accession was found for this target genome, for each tgt genome.
 			shared_acc_counts[np.nonzero(target_kmer_cts[acc_index])] += 1
 			these_kmers = [int(kmer) for kmer in acc_kmers[accession]]
+			#Miguel issue redev.
+			these_kmers = tuple(these_kmers)
+			temp_tab = "CREATE TEMPORARY TABLE " + temp_name + " (kmer INTEGER PRIMARY KEY)"
+			database.cursor.execute(temp_tab)
+			database.connection.commit()
+			insert_table = "INSERT INTO " + temp_name + " VALUES (?)"
+			database.cursor.executemany(insert_table, these_kmers)
+			database.connection.commit()
+			join_and_select_sql = "SELECT genomes FROM " + temp_name + " INNER JOIN " + sql_friendly_accession + " ON "+ temp_name+".kmer = " + sql_friendly_accession+".kmer;"
+			
 			these_intersections = np.zeros(target_len, dtype = np.int16)
-			sql_query = "SELECT genomes FROM " + sql_friendly_accession + " WHERE kmer in ({kmers})".format(kmers=','.join(['?']*len(these_kmers)))
-			for result in database.cursor.execute(sql_query, these_kmers):
+			#sql_query = "SELECT genomes FROM " + sql_friendly_accession + " WHERE kmer in ({kmers})".format(kmers=','.join(['?']*len(these_kmers)))
+			for result in database.cursor.execute(join_and_select_sql).fetchall():
 				these_intersections[result] += 1
 		
 			results[row] = np.divide(these_intersections, np.subtract(np.add(acc_kmers[accession].shape[0], target_kmer_cts[acc_index]), these_intersections))
