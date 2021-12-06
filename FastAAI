@@ -2168,12 +2168,26 @@ def do_sql_query(args):
 		acc_index = accession_index[accession]
 		sql_friendly_accession = accession.replace(".", "_")
 		if acc_index in database.accessions:
+			temp_name = name+"_"+sql_friendly_accession
 			#The accession was found for this target genome, for each tgt genome.
 			shared_acc_counts[np.nonzero(target_kmer_cts[acc_index])] += 1
-			these_kmers = [int(kmer) for kmer in acc_kmers[accession]]
+			
+			#Miguel issue redev.
+			these_kmers = [(int(kmer),) for kmer in acc_kmers[accession]]
+			temp_name = name+"_"+sql_friendly_accession
+			temp_name = temp_name.replace(".", "_")
+			
+			temp_tab = "CREATE TEMP TABLE " + temp_name + " (kmer INTEGER)"
+			database.cursor.execute(temp_tab)
+			database.connection.commit()
+			insert_table = "INSERT INTO " + temp_name + " VALUES (?)"
+			database.cursor.executemany(insert_table, these_kmers)
+			database.connection.commit()
+			join_and_select_sql = "SELECT genomes FROM " + temp_name + " INNER JOIN " + sql_friendly_accession + " ON "+ temp_name+".kmer = " + sql_friendly_accession+".kmer;"
+			
 			these_intersections = np.zeros(target_len, dtype = np.int16)
-			sql_query = "SELECT genomes FROM " + sql_friendly_accession + " WHERE kmer in ({kmers})".format(kmers=','.join(['?']*len(these_kmers)))
-			for result in database.cursor.execute(sql_query).fetchall():
+			#sql_query = "SELECT genomes FROM " + sql_friendly_accession + " WHERE kmer in ({kmers})".format(kmers=','.join(['?']*len(these_kmers)))
+			for result in database.cursor.execute(join_and_select_sql).fetchall():
 				these_intersections[result] += 1
 		
 			results[row] = np.divide(these_intersections, np.subtract(np.add(acc_kmers[accession].shape[0], target_kmer_cts[acc_index]), these_intersections))
@@ -2247,10 +2261,23 @@ def do_sql_query_no_SD(args):
 		if acc_index in database.accessions:
 			#The accession was found for this target genome, for each tgt genome.
 			shared_acc_counts[np.nonzero(target_kmer_cts[acc_index])] += 1
-			these_kmers = [int(kmer) for kmer in acc_kmers[accession]]
+			
+			these_kmers = [(int(kmer),) for kmer in acc_kmers[accession]]
+			#Miguel issue redev.
+			temp_name = name+"_"+sql_friendly_accession
+			temp_name = temp_name.replace(".", "_")
+			
+			temp_tab = "CREATE TEMP TABLE " + temp_name + " (kmer INTEGER)"
+			database.cursor.execute(temp_tab)
+			database.connection.commit()
+			insert_table = "INSERT INTO " + temp_name + " VALUES (?)"
+			database.cursor.executemany(insert_table, these_kmers)
+			database.connection.commit()
+			join_and_select_sql = "SELECT genomes FROM " + temp_name + " INNER JOIN " + sql_friendly_accession + " ON "+ temp_name+".kmer = " + sql_friendly_accession+".kmer;"
+			
 			these_intersections = np.zeros(target_len, dtype = np.int16)
-			sql_query = "SELECT genomes FROM " + sql_friendly_accession + " WHERE kmer in ({kmers})".format(kmers=','.join(['?']*len(these_kmers)))
-			for result in database.cursor.execute(sql_query, these_kmers):
+			#sql_query = "SELECT genomes FROM " + sql_friendly_accession + " WHERE kmer in ({kmers})".format(kmers=','.join(['?']*len(these_kmers)))
+			for result in database.cursor.execute(join_and_select_sql).fetchall():
 				these_intersections[result] += 1
 			
 			results += np.divide(these_intersections, np.subtract(np.add(acc_kmers[accession].shape[0], target_kmer_cts[acc_index]), these_intersections))
@@ -2702,8 +2729,6 @@ def merge_db_opts():
 			
 	parser.add_argument('-d', '--donors',      dest = 'donors',    default = None,   help =  'Comma-separated string of paths to one or more donor databases. The genomes FROM the donors will be added TO the recipient and the donors will be unaltered')
 
-	parser.add_argument('--donor_file',        dest = 'donor_file',    default = None,   help =  'Alternative way to supply donors. A file containing paths to the donor databases, 1 per line')
-
 	parser.add_argument('-r', '--recipient',   dest = 'recipient', default = None, help =  'Path to the recipient database. Any genomes FROM the donor database not already in the recipient will be added to this database.')	
 		
 	parser.add_argument('--verbose',           dest = 'verbose',   action='store_true', help = 'Print minor updates to console. Major updates are printed regardless.')
@@ -2722,23 +2747,16 @@ def merge_db_thread_starter(rev_index, per_db_accs):
 	
 	
 	
-def merge_db(recipient, donors, donor_file, verbose, threads):
+def merge_db(recipient, donors, verbose, threads):
 	#Prettier on the CLI
-	
-	if donor_file is not None:
-		fh = agnostic_reader(donor_file)
-		donors = [line.strip() for line in fh]
-		fh.close()
-	
+
 	if donors is None or recipient is None:
 		print("Either donor or target not given. FastAAI is exiting.")
 		return None
 	
 	print("")
 	
-	if donor_file is None:
-		donors = donors.split(",")
-	
+	donors = donors.split(",")
 	valid_donors = []
 	for d in donors:
 		if os.path.exists(d):
@@ -2856,6 +2874,8 @@ def merge_db(recipient, donors, donor_file, verbose, threads):
 		
 	all_accessions = list(all_accessions)
 	
+	#if not os.path.exists("FastAAI_temp"):
+	#	os.mkdir("FastAAI_temp")
 	
 	print("")
 	print("Formatting data to add to database. Started at", curtime())
@@ -2954,12 +2974,10 @@ def merge_db(recipient, donors, donor_file, verbose, threads):
 					pass
 	except:
 		#Error
-		if os.path.exists(temp_dir):
-			shutil.rmtree(temp_dir)
+		shutil.rmtree(temp_dir)
 	finally:
 		#Success
-		if os.path.exists(temp_dir):
-			shutil.rmtree(temp_dir)
+		shutil.rmtree(temp_dir)
 		
 	print("\nDatabases merged!")
 	
@@ -3465,11 +3483,10 @@ def main():
 			
 		recipient = opts.recipient
 		donors = opts.donors
-		donor_file = opts.donor_file
 		verbose = opts.verbose
 		threads = opts.threads
 		
-		merge_db(recipient, donors, donor_file, verbose, threads)
+		merge_db(recipient, donors, verbose, threads)
 		
 #################### Query files vs DB ########################	
 		
