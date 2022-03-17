@@ -39,18 +39,53 @@ Coming soon
 
 ## Installation
 
+### Conda Installation
+It appears we need a bunch of pre-requisites to run FastAAI. No worries, their installation using Conda is quite easy. If you don't have Conda, you can install it as follows:
+1. Download Anaconda from https://www.anaconda.com/products/individual.
+2. Run `bash Anaconda-latest-Linux-x86_64.sh` and follow the installation instructions.
+3. Once installed you can run `conda -V`. You should get the version of conda that you installed.
+
+
+Now, let's add the conda channels required to install the pre-requisites:
+
+```bash
+conda config --add channels conda-forge
+conda config --add channels bioconda
+```
+
+Then, create an environment for FastAAI:
+
+```bash
+conda create -n fastaai hmmer prodigal numpy python=3.7
+```
+
+And activate it:
+
+```bash
+conda activate fastaai
+```
+
 ### Pip Installation
 
-Installation of FastAAI is best done with pip. First install the prerequisite NumPy, then FastAAI with the following commands:
+Final installation of FastAAI should be done with pip. Once you have the  FastAAI with the following command:
 
-```
-pip install numpy
+```bash
 pip install FastAAI
 ```
 
 ## Usage
 
-FastAAI is 
+FastAAI executes its behaviors through commands. A list of commands and their behaviors can be seen through simply calling FastAAI on the command line:
+
+```bash
+fastaai
+```
+
+The various commands each contain their own usage instructions, which can be accessed through calling fastaai [command], e.g.
+
+```bash
+fastaai build_db
+```
 
 ### Database creation
 
