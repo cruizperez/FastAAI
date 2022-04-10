@@ -1,0 +1,2 @@
+include fastaai/00.Libraries/01.SCG_HMMs/Archaea_SCG.hmm fastaai/00.Libraries/01.SCG_HMMs/Bacteria_SCG.hmm fastaai/00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm
+
