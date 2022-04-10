@@ -550,7 +550,7 @@ class input_file:
 		#starting path for the file; irrelevant for protein and hmm, but otherwise useful for keeping track.
 		self.path = input_path
 		#Output directory starts with this
-		self.output = os.path.normpath(os.path.basename(output) + "/")
+		self.output = os.path.normpath(output + "/")
 		#For printing file updates, this is the input name
 		self.name = os.path.basename(input_path)
 		#original name is the key used for the genomes index later on.
@@ -561,6 +561,16 @@ class input_file:
 			self.basename = os.path.splitext(os.path.basename(input_path[:-3]))[0]
 		else:
 			self.basename = os.path.splitext(os.path.basename(input_path))[0]
+		
+		#Sanitize for SQL
+		#These are chars safe for sql
+		sql_safe = set('_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+		current_chars = set(self.basename)
+		self.sql_name = self.basename
+		#Identify SQL-unsafe characters as those outside the permissible set and replace all with underscores.
+		for char in current_chars - sql_safe:
+			self.sql_name = self.sql_name.replace(char, "_")
+		
 		#'genome' or 'protein' or 'protein and HMM' 
 		self.status = None
 		#These will keep track of paths for each stage of file for us.
@@ -1334,7 +1344,8 @@ def add_inputs(output_path, parent_path, existing_index, threads, verbose, prep_
 	#unique_accessions = set()
 	for file in inputs:
 		
-		genome = file.basename
+		#genome = file.basenames
+		genome = file.sql_name
 		
 		#Collect all of the accessions actually found. Will usually be 122 for reasonably sized datasets.
 		#unique_accessions = unique_accessions.union(set(file.best_hits.values()))
