@@ -566,10 +566,10 @@ class input_file:
 		#These are chars safe for sql
 		sql_safe = set('_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
 		current_chars = set(self.basename)
-		self.sql_name = self.basename
+		#self.sql_name = self.basename
 		#Identify SQL-unsafe characters as those outside the permissible set and replace all with underscores.
 		for char in current_chars - sql_safe:
-			self.sql_name = self.sql_name.replace(char, "_")
+			self.basename = self.basename.replace(char, "_")
 		
 		#'genome' or 'protein' or 'protein and HMM' 
 		self.status = None
@@ -1345,7 +1345,7 @@ def add_inputs(output_path, parent_path, existing_index, threads, verbose, prep_
 	for file in inputs:
 		
 		#genome = file.basenames
-		genome = file.sql_name
+		genome = file.basename
 		
 		#Collect all of the accessions actually found. Will usually be 122 for reasonably sized datasets.
 		#unique_accessions = unique_accessions.union(set(file.best_hits.values()))
