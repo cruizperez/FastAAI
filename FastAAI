@@ -15,9 +15,7 @@ import tempfile
 #from random import randint
 
 #We could probably remove Path, too.
-from pathlib import Path
 #This as well
-from functools import partial
 import time
 from collections import defaultdict
 import sys
@@ -29,7 +27,68 @@ import numpy as np
 import io
 import random
 
+import pyrodigal as pd
+import pyhmmer
 
+from collections import namedtuple
+
+from math import ceil
+
+class progress_tracker:
+	def __init__(self, total, step_size = 2, message = None):
+		self.current_count = 0
+		self.max_count = total
+		#Book keeping.
+		self.start_time = None
+		self.end_time = None
+		#Show progrexx every [step] percent
+		self.step = step_size
+		self.justify_size = ceil(100/self.step)
+		self.last_percent = 0
+		self.message = message
+		
+		self.start()
+
+	def curtime(self):
+		time_format = "%d/%m/%Y %H:%M:%S"
+		timer = datetime.datetime.now()
+		time = timer.strftime(time_format)
+		return time
+		
+	def start(self):
+		if self.message is not None:
+			print(self.message)
+		
+		print("")
+		try:
+			percentage = (self.current_count/self.max_count)*100
+			sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/self.step)).ljust(self.justify_size)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(self.current_count) + " of " + str(self.max_count) + ' ) at ' + self.curtime() + "\n")
+			sys.stdout.flush()
+		except:
+			#It's not really a big deal if the progress bar cannot be printed.
+			pass
+	
+	def update(self):
+		self.current_count += 1
+		percentage = (self.current_count/self.max_count)*100
+		try:
+			if percentage // self.step > self.last_percent:
+				sys.stdout.write('\033[A')
+				sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*int(percentage/self.step)).ljust(self.justify_size)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(self.current_count) + " of " + str(self.max_count) + ' ) at ' + self.curtime() + "\n")
+				sys.stdout.flush()
+				self.last_percent = percentage // self.step
+			#Bar is always full at the end.
+			if count == self.max_count:
+				sys.stdout.write('\033[A')
+				sys.stdout.write("Completion".rjust(3)+ ' |'+('#'*self.justify_size).ljust(self.justify_size)+'| ' + ('%.2f'%percentage).rjust(7)+'% ( ' + str(self.current_count) + " of " + str(self.max_count) + ' ) at ' + self.curtime() + "\n")
+				sys.stdout.flush()
+				#Add space at end.
+				print("")
+		except:
+			#It's not really a big deal if the progress bar cannot be printed.
+			pass
+					
+					
 #Takes a bytestring from the SQL database and converts it to a numpy array.
 def convert_array(bytestring):
 	return np.frombuffer(bytestring, dtype = np.int32)
@@ -43,6 +102,688 @@ def convert_float_array_32(bytestring):
 def convert_float_array_64(bytestring):
 	return np.frombuffer(bytestring, dtype = np.float64)
 
+def read_fasta(file):
+	cur_seq = ""
+	cur_prot = ""
+	
+	contents = {}
+	deflines = {}
+	
+	fasta = agnostic_reader(file)
+	for line in fasta:
+		if line.startswith(">"):
+			if len(cur_seq) > 0:
+				contents[cur_prot] = cur_seq
+				deflines[cur_prot] = defline
+				
+			cur_seq = ""
+			cur_prot = line.strip().split()[0][1:]
+			defline = line.strip()[len(cur_prot)+1 :].strip()
+			
+		else:
+			cur_seq += line.strip()
+				
+	fasta.close()
+	
+	#Final iter
+	if len(cur_seq) > 0:
+		contents[cur_prot] = cur_seq
+		deflines[cur_prot] = defline
+		
+	return contents, deflines
+	
+class fasta_file:
+	def __init__(self, file, type = "genome"):
+		self.file_path = os.path.abspath(file)
+		self.name = os.path.basename(file)
+		self.no_ext = os.path.splitext(self.name)[0]
+		self.type = type
+		
+		self.tuple_structure = namedtuple("fasta", ["seqid", "description", "sequence"])
+		self.contents = {}
+		
+	def convert(self, contents, descriptions):
+		for protein in contents:
+			self.contents = self.tuple_structure(seqid = protein, description = descriptions[protein], sequence = contents[protein])
+			
+	
+	def def_import_file(self):
+		contents, descriptions = read_fasta(self.file_path)
+		self.convert(contents, descriptions)
+		
+	
+class pyhmmer_manager:
+	def __init__(self, do_compress):
+		self.hmm_model = []
+		self.hmm_model_optimized = None
+		
+		self.proteins_to_search = []
+		self.protein_descriptions = None
+		
+		self.hmm_result_proteins = []
+		self.hmm_result_accessions = []
+		self.hmm_result_scores = []
+		
+		self.printable_lines = []
+		
+		self.bacterial_SCPs = None
+		self.archaeal_SCPs = None
+		self.assign_hmm_sets()
+		self.domain_counts = {"Bacteria" : 0, "Archaea": 0}
+		self.voted_domain = {"Bacteria" : len(self.bacterial_SCPs), "Archaea" : len(self.archaeal_SCPs)}
+		
+		self.bacterial_fraction = None
+		self.archaeal_fraction = None
+		
+		self.best_hits = None
+		
+		self.do_compress = False
+		
+	def optimize_models(self):
+		try:
+			self.hmm_model_optimized = []
+			
+			for hmm in self.hmm_model:
+				prof = pyhmmer.plan7.Profile(M = hmm.insert_emissions.shape[0], alphabet = pyhmmer.easel.Alphabet.amino())
+				prof.configure(hmm = hmm, background = pyhmmer.plan7.Background(alphabet = pyhmmer.easel.Alphabet.amino()), L = hmm.insert_emissions.shape[0]-1)
+				optim = prof.optimized()
+				self.hmm_model_optimized.append(optim)
+				
+			#Clean up.
+			self.hmm_model = None
+		except:
+			#Quiet fail condition - fall back on default model.
+			self.hmm_model_optimized = None
+		
+	#Load HMM and try to optimize.
+	def load_hmm_from_file(self, hmm_path):
+		hmm_set = pyhmmer.plan7.HMMFile(hmm_path)
+		for hmm in hmm_set:
+			self.hmm_model.append(hmm)
+			
+		#This doesn't seem to be improving performance currently.
+		self.optimize_models()
+			
+	#Set archaeal and bacterial HMM sets.
+	def assign_hmm_sets(self):
+		self.bacterial_SCPs = {'PF00709_21': 'Adenylsucc_synt', 'PF00406_22': 'ADK', 'PF01808_18': 'AICARFT_IMPCHas', 'PF00231_19': 'ATP-synt',
+		'PF00119_20': 'ATP-synt_A', 'PF01264_21': 'Chorismate_synt', 'PF00889_19': 'EF_TS', 'PF01176_19': 'eIF-1a',
+		'PF02601_15': 'Exonuc_VII_L', 'PF01025_19': 'GrpE', 'PF01725_16': 'Ham1p_like', 'PF01715_17': 'IPPT',
+		'PF00213_18': 'OSCP', 'PF01195_19': 'Pept_tRNA_hydro', 'PF00162_19': 'PGK', 'PF02033_18': 'RBFA', 'PF02565_15': 'RecO_C',
+		'PF00825_18': 'Ribonuclease_P', 'PF00687_21': 'Ribosomal_L1', 'PF00572_18': 'Ribosomal_L13',
+		'PF00238_19': 'Ribosomal_L14', 'PF00252_18': 'Ribosomal_L16', 'PF01196_19': 'Ribosomal_L17',
+		'PF00861_22': 'Ribosomal_L18p', 'PF01245_20': 'Ribosomal_L19', 'PF00453_18': 'Ribosomal_L20',
+		'PF00829_21': 'Ribosomal_L21p', 'PF00237_19': 'Ribosomal_L22', 'PF00276_20': 'Ribosomal_L23',
+		'PF17136_4': 'ribosomal_L24', 'PF00189_20': 'Ribosomal_S3_C', 'PF00281_19': 'Ribosomal_L5', 'PF00181_23': 'Ribosomal_L2',
+		'PF01016_19': 'Ribosomal_L27', 'PF00828_19': 'Ribosomal_L27A', 'PF00830_19': 'Ribosomal_L28',
+		'PF00831_23': 'Ribosomal_L29', 'PF00297_22': 'Ribosomal_L3', 'PF01783_23': 'Ribosomal_L32p',
+		'PF01632_19': 'Ribosomal_L35p', 'PF00573_22': 'Ribosomal_L4', 'PF00347_23': 'Ribosomal_L6',
+		'PF03948_14': 'Ribosomal_L9_C', 'PF00338_22': 'Ribosomal_S10', 'PF00411_19': 'Ribosomal_S11',
+		'PF00416_22': 'Ribosomal_S13', 'PF00312_22': 'Ribosomal_S15', 'PF00886_19': 'Ribosomal_S16',
+		'PF00366_20': 'Ribosomal_S17', 'PF00203_21': 'Ribosomal_S19', 'PF00318_20': 'Ribosomal_S2',
+		'PF01649_18': 'Ribosomal_S20p', 'PF01250_17': 'Ribosomal_S6', 'PF00177_21': 'Ribosomal_S7',
+		'PF00410_19': 'Ribosomal_S8', 'PF00380_19': 'Ribosomal_S9', 'PF00164_25': 'Ribosom_S12_S23',
+		'PF01193_24': 'RNA_pol_L', 'PF01192_22': 'RNA_pol_Rpb6', 'PF01765_19': 'RRF', 'PF02410_15': 'RsfS',
+		'PF03652_15': 'RuvX', 'PF00584_20': 'SecE', 'PF03840_14': 'SecG', 'PF00344_20': 'SecY', 'PF01668_18': 'SmpB',
+		'PF00750_19': 'tRNA-synt_1d', 'PF01746_21': 'tRNA_m1G_MT', 'PF02367_17': 'TsaE', 'PF02130_17': 'UPF0054',
+		'PF02699_15': 'YajC'}
+		
+		self.archaeal_SCPs = {'PF00709_21': 'Adenylsucc_synt', 'PF05221_17': 'AdoHcyase', 'PF01951_16': 'Archease', 'PF01813_17': 'ATP-synt_D',
+		'PF01990_17': 'ATP-synt_F', 'PF01864_17': 'CarS-like', 'PF01982_16': 'CTP-dep_RFKase', 'PF01866_17': 'Diphthamide_syn',
+		'PF04104_14': 'DNA_primase_lrg', 'PF01984_20': 'dsDNA_bind', 'PF04010_13': 'DUF357', 'PF04019_12': 'DUF359',
+		'PF04919_12': 'DUF655', 'PF01912_18': 'eIF-6', 'PF05833_11': 'FbpA', 'PF01725_16': 'Ham1p_like',
+		'PF00368_18': 'HMG-CoA_red', 'PF00334_19': 'NDK', 'PF02006_16': 'PPS_PS', 'PF02996_17': 'Prefoldin',
+		'PF01981_16': 'PTH2', 'PF01948_18': 'PyrI', 'PF00687_21': 'Ribosomal_L1', 'PF00572_18': 'Ribosomal_L13',
+		'PF00238_19': 'Ribosomal_L14', 'PF00827_17': 'Ribosomal_L15e', 'PF00252_18': 'Ribosomal_L16',
+		'PF01157_18': 'Ribosomal_L21e', 'PF00237_19': 'Ribosomal_L22', 'PF00276_20': 'Ribosomal_L23',
+		'PF16906_5': 'Ribosomal_L26', 'PF00831_23': 'Ribosomal_L29', 'PF00297_22': 'Ribosomal_L3',
+		'PF01198_19': 'Ribosomal_L31e', 'PF01655_18': 'Ribosomal_L32e', 'PF01780_19': 'Ribosomal_L37ae',
+		'PF00832_20': 'Ribosomal_L39', 'PF00573_22': 'Ribosomal_L4', 'PF00935_19': 'Ribosomal_L44', 'PF17144_4': 'Ribosomal_L5e',
+		'PF00347_23': 'Ribosomal_L6', 'PF00411_19': 'Ribosomal_S11', 'PF00416_22': 'Ribosomal_S13',
+		'PF00312_22': 'Ribosomal_S15', 'PF00366_20': 'Ribosomal_S17', 'PF00833_18': 'Ribosomal_S17e',
+		'PF00203_21': 'Ribosomal_S19', 'PF01090_19': 'Ribosomal_S19e', 'PF00318_20': 'Ribosomal_S2',
+		'PF01282_19': 'Ribosomal_S24e', 'PF01667_17': 'Ribosomal_S27e', 'PF01200_18': 'Ribosomal_S28e',
+		'PF01015_18': 'Ribosomal_S3Ae', 'PF00177_21': 'Ribosomal_S7', 'PF00410_19': 'Ribosomal_S8',
+		'PF01201_22': 'Ribosomal_S8e', 'PF00380_19': 'Ribosomal_S9', 'PF00164_25': 'Ribosom_S12_S23',
+		'PF06026_14': 'Rib_5-P_isom_A', 'PF01351_18': 'RNase_HII', 'PF13656_6': 'RNA_pol_L_2',
+		'PF01194_17': 'RNA_pol_N', 'PF03874_16': 'RNA_pol_Rpb4', 'PF01192_22': 'RNA_pol_Rpb6',
+		'PF01139_17': 'RtcB', 'PF00344_20': 'SecY', 'PF06093_13': 'Spt4', 'PF00121_18': 'TIM', 'PF01994_16': 'Trm56',
+		'PF00749_21': 'tRNA-synt_1c', 'PF00750_19': 'tRNA-synt_1d', 'PF13393_6': 'tRNA-synt_His',
+		'PF01142_18': 'TruD', 'PF01992_16': 'vATP-synt_AC39', 'PF01991_18': 'vATP-synt_E', 'PF01496_19': 'V_ATPase_I'}
+		
+	#Convert passed sequences.
+	def convert_protein_seqs_in_mem(self, contents):
+		#Clean up.
+		self.proteins_to_search = []
+		
+		for protein in contents:
+			#Skip a protein if it's longer than 100k AA.
+			if len(contents[protein]) >= 100000:
+				continue
+			as_bytes = protein.encode()
+			#Pyhmmer digitization of sequences for searching.
+			easel_seq = pyhmmer.easel.TextSequence(name = as_bytes, sequence = contents[protein])
+			easel_seq = easel_seq.digitize(pyhmmer.easel.Alphabet.amino())
+			self.proteins_to_search.append(easel_seq)
+			
+		easel_seq = None		
+			
+	def load_protein_seqs_from_file(self, prots_file):
+		#Pyhmmer has a method for loading a fasta file, but we need to support gzipped inputs, so we do it manually.
+		contents, deflines = read_fasta(prots_file)
+		self.protein_descriptions = deflines
+		self.convert_protein_seqs_in_mem(contents)
+		
+	def execute_search(self):
+		if self.hmm_model_optimized is None:
+			top_hits = list(pyhmmer.hmmsearch(self.hmm_model, self.proteins_to_search, cpus=1, bit_cutoffs="trusted"))
+		else:
+			top_hits = list(pyhmmer.hmmsearch(self.hmm_model_optimized, self.proteins_to_search, cpus=1, bit_cutoffs="trusted"))
+		
+		self.printable_lines = []
+		
+		self.hmm_result_proteins = []
+		self.hmm_result_accessions = []
+		self.hmm_result_scores = []
+		
+		for model in top_hits:
+			for hit in model:
+				target_name = hit.name.decode()
+				target_acc = hit.accession
+				if target_acc is None:
+					target_acc = "-"
+				else:
+					target_acc = target_acc.decode()
+				
+				query_name = hit.best_domain.alignment.hmm_name.decode()
+				query_acc = hit.best_domain.alignment.hmm_accession.decode()
+				
+				full_seq_evalue = "%.2g" % hit.evalue
+				full_seq_score = round(hit.score, 1)
+				full_seq_bias = round(hit.bias, 1)
+				
+				best_dom_evalue = "%.2g" % hit.best_domain.alignment.domain.i_evalue
+				best_dom_score = round(hit.best_domain.alignment.domain.score, 1)
+				best_dom_bias = round(hit.best_domain.alignment.domain.bias, 1)
+
+				#I don't know how to get most of these values.
+				exp = 0
+				reg = 0
+				clu = 0
+				ov  = 0
+				env = 0
+				dom = len(hit.domains)
+				rep = 0
+				inc = 0
+				
+				try:
+					description = self.protein_descriptions[target_name]
+				except:
+					description = ""
+				
+				writeout = [target_name, target_acc, query_name, query_acc, full_seq_evalue, \
+				full_seq_score, full_seq_bias, best_dom_evalue, best_dom_score, best_dom_bias, \
+				exp, reg, clu, ov, env, dom, rep, inc, description]
+				
+				#Format and join.
+				writeout = [str(i) for i in writeout]
+				writeout = '\t'.join(writeout)
+				
+				self.printable_lines.append(writeout)
+				
+				self.hmm_result_proteins.append(target_name)
+				self.hmm_result_accessions.append(query_acc)
+				self.hmm_result_scores.append(best_dom_score)
+		
+	def filter_to_best_hits(self):
+		hmm_file = np.transpose(np.array([self.hmm_result_proteins, self.hmm_result_accessions, self.hmm_result_scores]))
+		
+		#hmm_file = np.loadtxt(hmm_file_name, comments = '#', usecols = (0, 3, 8), dtype=(str))
+		#Sort the hmm file based on the score column in descending order.
+		hmm_file = hmm_file[hmm_file[:,2].astype(float).argsort()[::-1]]
+		
+		#Identify the first row where each gene name appears, after sorting by score; 
+		#in effect, return the highest scoring assignment per gene name
+		#Sort the indices of the result to match the score-sorted table instead of alphabetical order of gene names
+		hmm_file = hmm_file[np.sort(np.unique(hmm_file[:,0], return_index = True)[1])]
+		
+		#Filter the file again for the unique ACCESSION names, since we're only allowed one gene per accession, I guess?
+		#Don't sort the indices, we don't care about the scores anymore.
+		hmm_file = hmm_file[np.unique(hmm_file[:,1], return_index = True)[1]]
+		
+		sql_friendly_names = [i.replace(".", "_") for i in hmm_file[:,1]]
+		
+		self.best_hits = dict(zip(hmm_file[:,0], sql_friendly_names))
+		
+		hmm_file = None
+	
+	#Count per-dom occurs.
+	def assign_domain(self):
+		for prot in self.best_hits.values():
+			if prot in self.bacterial_SCPs:
+				self.domain_counts["Bacteria"] += 1
+			if prot in self.archaeal_SCPs:
+				self.domain_counts["Archaea"] += 1
+			
+		self.bacterial_fraction = self.domain_counts["Bacteria"] / self.voted_domain["Bacteria"]
+		self.aechaeal_fraction = self.domain_counts["Archaea"]  / self.voted_domain["Archaea"]
+			
+		if self.bacterial_fraction >= self.aechaeal_fraction:
+			self.voted_domain = "Bacteria"
+		else:
+			self.voted_domain = "Archaea"
+			
+		pop_keys = list(self.best_hits.keys())
+		for key in pop_keys:
+			if self.voted_domain == "Bacteria":
+				if self.best_hits[key] not in self.bacterial_SCPs:
+					self.best_hits.pop(key)
+			if self.voted_domain == "Archaea":
+				if self.best_hits[key] not in self.archaeal_SCPs:
+					self.best_hits.pop(key)
+				
+	def to_hmm_file(self, output):
+		#PyHMMER data is a bit hard to parse. For each result:
+		
+		content = '\n'.join(self.printable_lines) + '\n'
+		
+		if self.do_compress:
+			#Clean
+			if os.path.exists(output):
+				os.remove(output)
+			#content = '\n'.join(self.printable_lines) + '\n'
+			content = content.encode()
+			
+			#for formatted_line in self.printable_lines:	
+			#	content += self.hmm_result_proteins[i].encode() + b'\t' + self.hmm_result_accessions[i].encode()+ b'\t' + str(round(self.hmm_result_scores[i], 1)).encode() + b'\n'
+				
+			fh = gzip.open(output+".gz", "wb")
+			fh.write(content)
+			fh.close()
+			content = None
+			
+		else:
+			#Clean
+			if os.path.exists(output+".gz"):
+				os.remove(output+".gz")
+				
+			fh = open(output, "w")
+			#for formatted_line in self.printable_lines:
+			
+			fh.write(content)
+				
+			fh.close()
+			
+		content = None
+		
+	#If we're doing this step at all, we've either loaded the seqs into mem by reading the prot file
+	#or have them in mem thanks to pyrodigal.
+	def run_for_fastaai(self, prots, hmm_output):
+		try:
+			self.convert_protein_seqs_in_mem(prots)
+			self.execute_search()
+			self.filter_to_best_hits()
+			self.to_hmm_file(hmm_output)
+		except:
+			print(output, "cannot be created. HMM search failed. This file will be skipped.")
+			self.best_hits = None
+		
+def hmm_preproc_initializer(hmm_file, do_compress = False):
+	global hmm_manager
+	hmm_manager = pyhmmer_manager(do_compress)
+	hmm_manager.load_hmm_from_file(hmm_file)
+	#global kmer_index_
+	#kmer_index_ = create_kmer_index()
+	
+class pyrodigal_manager:
+	def __init__(self, file = None, aa_out = None, nt_out = None, is_meta = False, full_headers = True, trans_table = 11,
+				num_bp_fmt = True, verbose = True, do_compress = "0", compare_against = None):
+		#Input NT sequences
+		self.file = file
+		
+		#List of seqs read from input file.
+		self.sequences = None
+		#Concatenation of up to first 32 million bp in self.sequences - prodigal caps at this point.
+		self.training_seq = None
+		
+		#Predicted genes go here
+		self.predicted_genes = None
+		#Record the translation table used.
+		self.trans_table = trans_table
+		
+		#This is the pyrodigal manager - this does the gene predicting.
+		self.manager = pd.OrfFinder(meta=is_meta)
+		self.is_meta = is_meta
+		
+		#Full prodigal header information includes more than just a protein number.
+		#If full_headers is true, protein deflines will match prodigal; else, just protein ID.
+		self.full_headers = full_headers
+		
+		#Prodigal prints info to console. I enhanced the info and made printing default, but also allow them to be totally turned off.
+		self.verbose = verbose
+		
+		#Prodigal formats outputs with 70 bases per line max
+		self.num_bp_fmt = num_bp_fmt
+		
+		#File names for outputs
+		self.aa_out = aa_out
+		self.nt_out = nt_out
+		
+		#List of proteins in excess of 100K base pairs (HMMER's limit) and their lengths. This is also fastAAI specific.
+		self.excluded_seqs = {}
+		
+		#Gzip outputs if asked.
+		self.compress = do_compress
+		
+		self.labeled_proteins = None
+		
+		#Normally, we don't need to keep an input sequence after it's had proteins predicted for it - however
+		#For FastAAI and MiGA's purposes, comparisons of two translation tables is necessary.
+		#Rather than re-importing sequences and reconstructing the training sequences, 
+		#keep them for faster repredict with less I/O
+		self.compare_to = compare_against
+		if self.compare_to is not None:
+			self.keep_seqs = True
+			self.keep_after_train = True
+		else:
+			self.keep_seqs = False
+			self.keep_after_train = False
+	
+	#Imports a fasta as binary.
+	def import_sequences(self):
+		if self.sequences is None:
+			self.sequences = {}
+			
+		#check for zipped and import as needed.
+		with open(self.file, 'rb') as test_gz:
+			#Gzip magic number
+			is_gz = (test_gz.read(2) == b'\x1f\x8b')
+		
+		if is_gz:
+			fh = gzip.open(self.file)
+		else:
+			fh = open(self.file, "rb")
+		
+		imp = fh.readlines()
+		
+		fh.close()
+		
+		cur_seq = None
+		for s in imp:
+			s = s.decode().strip()
+			#> is 62 in ascii. This is asking if the first character is '>'
+			if s.startswith(">"):
+				#Skip first cycle, then do for each after
+				if cur_seq is not None:
+					self.sequences[cur_seq] = ''.join(self.sequences[cur_seq])
+					self.sequences[cur_seq] = self.sequences[cur_seq].encode()
+					#print(cur_seq, len(self.sequences[cur_seq]))
+				cur_seq = s[1:]
+				cur_seq = cur_seq.split()[0]
+				cur_seq = cur_seq.encode('utf-8')
+				self.sequences[cur_seq] = []
+			else:
+				#Remove the newline character.
+				#bases = s[:-1]
+				self.sequences[cur_seq].append(s)
+		
+		#Final set
+		self.sequences[cur_seq] = ''.join(self.sequences[cur_seq])
+		self.sequences[cur_seq] = self.sequences[cur_seq].encode()
+		
+		#Now we have the data, go to training.
+		if not self.is_meta:
+			self.train_manager()
+		
+	#Collect up to the first 32 million bases for use in training seq.
+	def train_manager(self):
+		running_sum = 0
+		seqs_added = 0
+		if self.training_seq is None:
+			self.training_seq = []
+			for seq in self.sequences:
+				running_sum += len(self.sequences[seq])
+				if seqs_added > 0:
+					#Prodigal interleaving logic - add this breaker between sequences, starting at sequence 2
+					self.training_seq.append(b'TTAATTAATTAA')
+					running_sum += 12
+					
+				seqs_added += 1
+					
+				#Handle excessive size
+				if running_sum >= 32000000:					
+					print("Warning:  Sequence is long (max 32000000 for training).")
+					print("Training on the first 32000000 bases.")
+				
+					to_remove = running_sum - 32000000
+					
+					#Remove excess characters
+					cut_seq = self.sequences[seq][:-to_remove]
+					#Add the partial seq
+					self.training_seq.append(cut_seq)
+					
+					#Stop the loop and move to training
+					break
+				
+				#add in a full sequence
+				self.training_seq.append(self.sequences[seq])
+
+			if seqs_added > 1:
+				self.training_seq.append(b'TTAATTAATTAA')
+				
+			self.training_seq = b''.join(self.training_seq)
+		
+		if len(self.training_seq) < 20000:
+			if self.verbose:
+				print("Can't train on 20 thousand or fewer characters. Switching to meta mode.")
+			self.manager = pd.OrfFinder(meta=True)
+			self.is_meta = True
+		else:
+			if self.verbose:
+				print("")
+				#G is 71, C is 67; we're counting G + C and dividing by the total.
+				gc = round(((self.training_seq.count(67) + self.training_seq.count(71))/ len(self.training_seq)) * 100, 2)
+				print(len(self.training_seq), "bp seq created,", gc, "pct GC")
+				
+			#Train
+			self.manager.train(self.training_seq, translation_table = self.trans_table)
+		
+		if not self.keep_after_train:
+			#Clean up
+			self.training_seq = None
+		
+	def predict_genes(self):
+		if self.is_meta:
+			if self.verbose:
+				print("Finding genes in metagenomic mode")
+		else:
+			if self.verbose:
+				print("Finding genes with translation table", self.trans_table)
+				print("")
+			
+		self.predicted_genes = {}
+		for seq in self.sequences:
+			
+			if self.verbose:
+				print("Finding genes in sequence", seq.decode(), "("+str(len(self.sequences[seq]))+ " bp)... ", end = '')
+				
+			self.predicted_genes[seq] = self.manager.find_genes(self.sequences[seq])
+				
+			#If we're comparing multiple tables, then we want to keep these for re-prediction.
+			if not self.keep_seqs:
+				#Clean up
+				self.sequences[seq] = None
+			
+			if self.verbose:
+				print("done!")
+			
+	#Predict genes with an alternative table, compare results, and keep the winner.	
+	def compare_alternative_table(self, table):
+		if table == self.trans_table:
+			print("You're trying to compare table", table, "with itself.")
+		else:
+			if self.verbose:
+				print("Comparing translation table", self.trans_table, "against table", table)
+			old_table = self.trans_table
+			old_genes = self.predicted_genes
+			old_size = 0
+			for seq in self.predicted_genes:
+				for gene in self.predicted_genes[seq]:
+					old_size += (gene.end - gene.begin)
+			
+			self.trans_table = table
+			self.train_manager()
+			self.predict_genes()
+				
+			new_size = 0
+			for seq in self.predicted_genes:
+				for gene in self.predicted_genes[seq]:
+					new_size += (gene.end - gene.begin)
+			
+			if (old_size / new_size) > 1.1:
+				if self.verbose:
+					print("Translation table", self.trans_table, "performed better than table", old_table, "and will be used instead.")
+			else:
+				if self.verbose:
+					print("Translation table", self.trans_table, "did not perform significantly better than table", old_table, "and will not be used.")
+				self.trans_table = old_table
+				self.predicted_genes = old_genes
+			
+			#cleanup
+			old_table = None
+			old_genes = None
+			old_size = None
+			new_size = None
+		
+	def predict_and_compare(self):
+		self.predict_genes()
+	
+		#Run alt comparisons in gene predict.
+		if self.compare_to is not None:
+			while len(self.compare_to) > 0:
+				try:
+					next_table = int(self.compare_to.pop(0))
+					
+					if len(self.compare_to) == 0:
+						#Ready to clean up.
+						self.keep_after_train = True
+						self.keep_seqs = True
+					
+					self.compare_alternative_table(next_table)
+				except:
+					print("Alternative table comparison failed! Skipping.")
+		
+	#Break lines into size base pairs per line. Prodigal's default for bp is 70, aa is 60.
+	def num_bp_line_format(self, string, size = 70):
+		#ceiling funciton without the math module
+		ceiling = int(round((len(string)/size)+0.5, 0))
+		formatted = '\n'.join([string[(i*size):(i+1)*size] for i in range(0, ceiling)])
+		return formatted
+	
+	#Writeouts
+	def write_nt(self):
+		if self.nt_out is not None:
+			if self.verbose:
+				print("Writing nucleotide sequences... ")
+			if self.compress == '1' or self.compress == '2':
+				out_writer = gzip.open(self.nt_out+".gz", "wb")
+				
+				content = b''
+				
+				for seq in self.predicted_genes:
+					seqname = b">"+ seq + b"_"
+					#Gene counter
+					count = 1
+					for gene in self.predicted_genes[seq]:
+						#Full header lines
+						if self.full_headers:
+							content += b' # '.join([seqname + str(count).encode(), str(gene.begin).encode(), str(gene.end).encode(), str(gene.strand).encode(), gene._gene_data.encode()])
+						else:
+							#Reduced headers if we don't care.
+							content += seqname + str(count).encode()
+							
+						content += b'\n'
+							
+						if self.num_bp_fmt:
+							#60 bp cap per line
+							content += self.num_bp_line_format(gene.sequence(), size = 70).encode()
+						else:
+							#One-line sequence.
+							content += gene.sequence().encode()
+							
+						content += b'\n'
+						count += 1
+				
+				out_writer.write(content)
+				out_writer.close()
+			
+			if self.compress == '0' or self.compress == '2':
+				out_writer = open(self.nt_out, "w")
+			
+				for seq in self.predicted_genes:
+					#Only do this decode once.
+					seqname = ">"+ seq.decode() +"_"
+					#Gene counter
+					count = 1
+					
+					for gene in self.predicted_genes[seq]:
+						#Full header lines
+						if self.full_headers:
+							#Standard prodigal header
+							print(seqname + str(count), gene.begin, gene.end, gene.strand, gene._gene_data, sep = " # ", file = out_writer)
+						else:
+							#Reduced headers if we don't care.
+							print(seqname + str(count), file = out_writer)
+							
+						if self.num_bp_fmt:
+							#60 bp cap per line
+							print(self.num_bp_line_format(gene.sequence(), size = 70), file = out_writer)
+						else:
+							#One-line sequence.
+							print(gene.sequence(), file = out_writer)
+							
+						count += 1
+							
+				out_writer.close()
+		
+	def write_aa(self):
+		if self.aa_out is not None:
+			if self.verbose:
+				print("Writing amino acid sequences...")
+				
+			self.labeled_proteins = {}
+			content = ''
+			for seq in self.predicted_genes:
+				count = 1
+				seqname = ">"+ seq.decode() + "_"
+				for gene in self.predicted_genes[seq]:
+					prot_name = seqname + str(count)
+					translation = gene.translate()
+					self.labeled_proteins[prot_name[1:]] = translation
+					defline = " # ".join([prot_name, str(gene.begin), str(gene.end), str(gene.strand), str(gene._gene_data)])
+					content += defline
+					content += "\n"
+					count += 1
+					content += self.num_bp_line_format(translation, size = 60)
+					content += "\n"					
+				
+			if self.compress == '0' or self.compress == '2':
+				out_writer = open(self.aa_out, "w")
+				out_writer.write(content)
+				out_writer.close()
+				
+			if self.compress == '1' or self.compress == '2':
+				content = content.encode()
+				out_writer = gzip.open(self.aa_out+".gz", "wb")
+				out_writer.write(content)
+				out_writer.close()
+				
+	def run_for_fastaai(self):
+		self.verbose = False
+		self.import_sequences()
+		self.train_manager()
+		self.predict_and_compare()
+		self.write_aa()
 	
 #Iterator for agnostic reader
 class agnostic_reader_iterator:
@@ -234,7 +975,6 @@ class fastaai_database:
 		for genome in kmer_dict:
 			kmer_lists.append((genome, kmer_dict[genome].tobytes()))
 			
-	
 		sql_friendly_accession = accession.replace(".", "_")
 		
 		#self.cursor.execute(" DROP TABLE IF EXISTS " + sql_friendly_accession + "_genomes")
@@ -330,7 +1070,7 @@ class fastaai_database:
 		tables.pop(tables.index('genome_index'))
 		
 		#Back to indicies.
-		tables = [converter[table.replace('_', '.')] for table in tables]
+		tables = [converter[table] for table in tables]
 		
 		self.accessions = tuple(tables)	
 		
@@ -487,7 +1227,6 @@ class child_database:
 		
 		return sql_friendly_accession
 	
-	
 #Holds partial results for calculating AAI.
 class calculation_database:
 	def __init__(self, path, precision):
@@ -546,12 +1285,13 @@ Class for handling all of the raw genome/protein/protein+HMM file inputs when bu
 Takes a file or files and processes them from genome -> protein, protein -> hmm, prot+HMM -> kmerized protein best hits as numpy int arrays according to the kmer_index
 
 '''
+
 class input_file:
-	def __init__(self, input_path, output, verbosity):
+	def __init__(self, input_path, output = "", verbosity = False, do_compress = False):
 		#starting path for the file; irrelevant for protein and hmm, but otherwise useful for keeping track.
 		self.path = input_path
 		#Output directory starts with this
-		self.output = os.path.normpath(os.path.basename(output) + "/")
+		self.output = os.path.normpath(output + "/")
 		#For printing file updates, this is the input name
 		self.name = os.path.basename(input_path)
 		#original name is the key used for the genomes index later on.
@@ -562,12 +1302,30 @@ class input_file:
 			self.basename = os.path.splitext(os.path.basename(input_path[:-3]))[0]
 		else:
 			self.basename = os.path.splitext(os.path.basename(input_path))[0]
+			
+		#Sanitize for SQL
+		#These are chars safe for sql
+		sql_safe = set('_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+		current_chars = set(self.basename)
+		#self.sql_name = self.basename
+		#Identify SQL-unsafe characters as those outside the permissible set and replace all with underscores.
+		for char in current_chars - sql_safe:
+			self.basename = self.basename.replace(char, "_")
+			
 		#'genome' or 'protein' or 'protein and HMM' 
 		self.status = None
 		#These will keep track of paths for each stage of file for us.
 		self.genome = None
 		self.protein = None
 		self.hmm = None
+		
+		self.ran_hmmer = False
+		
+		#If pyrodigal is run, then the protein sequences are already loaded into memory. 
+		#We reuse them in kmer extraction instead of another I/O
+		self.prepared_proteins = None
+		
+		self.intermediate = None
 		
 		self.best_hits = None
 		self.best_hits_kmers = None
@@ -584,23 +1342,39 @@ class input_file:
 		
 		self.verbose = verbosity
 		
+		#Check if the file failed to produce ANY SCP HMM hits.
+		self.is_empty = False
+		
 		#r_scripts_loc = os.path.dirname(sys.modules['metapop'].__file__) + "/metapop_r/"
 		#"00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
 		self.hmm_path = None
 		try:
 			#Try to locate the data bundled as it would be with a pip/conda install.
 			script_path = os.path.dirname(sys.modules['fastAAI_HMM_models'].__file__)
-			hmm_complete_model = script_path + '/00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm'
+			if len(script_path) == 0:
+				script_path = "."
+			hmm_complete_model = os.path.abspath(os.path.normpath(script_path + '/00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm'))
 			self.hmm_path = str(hmm_complete_model)
 			#Check that the file exists or fail to the except.
 			fh = open(self.hmm_path)
 			fh.close()
 		except:
 			#Look in the same dir as the script; old method/MiGA friendly
-			script_path = Path(__file__)
-			script_dir = script_path.parent
-			hmm_complete_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
+			script_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+			if len(script_path) == 0:
+				script_path = "."
+			hmm_complete_model = os.path.abspath(os.path.normpath(script_path +"/"+ "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"))
 			self.hmm_path = str(hmm_complete_model)
+	
+		self.do_compress = do_compress
+	
+		self.crystal = None
+	
+	def curtime(self):
+		time_format = "%d/%m/%Y %H:%M:%S"
+		timer = datetime.datetime.now()
+		time = timer.strftime(time_format)
+		return time
 	
 	#Functions for externally setting status and file paths of particular types
 	def set_genome(self, path):
@@ -616,262 +1390,158 @@ class input_file:
 			print("Warning! I don't have a protein yet, so this HMM will be useless to me until I do!")
 		self.status = 'protein and hmm'
 		self.hmm = path
+		
+	def set_crystal(self, path):
+		self.status = 'crystal'
+		self.crystal = path
 
 	#Runs prodigal, compares translation tables and stores faa files
 	def genome_to_protein(self):
 		if self.genome is None:
 			print(self.name, "wasn't a declared as a genome! I can't make this into a protein!")
-		else:
-			folder = Path(self.output + "/predicted_proteins")
-			protein_output = folder / (self.basename + '.faa')
-			output_11 = folder / (self.basename + '.faa.11')
-			output_4 = folder / (self.basename + '.faa.4')
-			temp_output = folder / (self.basename + '.temp')
-			
-			intermediate = folder / (self.basename + '_genome_intermediate.fasta')
-			
-			#total_bases = 0
-			
-			genome_parser = agnostic_reader(self.genome)
-			
-			if genome_parser.is_gz:
-				#File was a gzip; decompress it to an intermediate file and then run prodigal; delete after
-				#print("unzipping input...")
-				midpoint = open(intermediate, "w")
-				#Count input bases and write an unzipped file for prodigal's sake.
-				for line in genome_parser:
-					#if not line.startswith(">"):
-					#	total_bases += len(line.strip())
-					midpoint.write(line)
+		else:		
+			protein_output = os.path.normpath(self.output + "/predicted_proteins/" + self.basename + '.faa')
 					
-				midpoint.close()
-				
+			if self.do_compress:
+				compress_level = "1"
 			else:
-				#File is already unzipped, just point to it
-				intermediate = self.genome
-				#Count input bases
-				#for line in genome_parser:
-				#	if not line.startswith(">"):
-				#		total_bases += len(line.strip())
+				compress_level = "0"
 			
-			genome_parser.close()
-			'''
-			A chunk of code originally indended to match GTDBtk's table selection criteria.
-			if total_bases > 100000:
-				#training mode
-				subprocess.call(["prodigal", "-i", str(intermediate), "-a", str(output_11), "-q", "-o", str(temp_output)])				
-				subprocess.call(["prodigal", "-i", str(intermediate), "-a", str(output_4), "-g", "4", "-q", "-o", str(temp_output)])
+			mn = pyrodigal_manager(file = self.genome, aa_out = protein_output, compare_against = [4], do_compress = compress_level)
+			mn.run_for_fastaai()
+			
+			self.trans_table = str(mn.trans_table)
+			
+			for prot in mn.excluded_seqs:
+				self.err_log += "Protein " + prot + " was observed to have >100K amino acids ( " + str(mn.excluded_seqs[prot]) + " AA found ). It will not be included in predicted proteins for this genome;"
+			
+			self.prepared_proteins = mn.labeled_proteins
+			
+			del mn
+			
+			#If there are zipped files leftover and we didn't want them, clean them up.
+			if self.do_compress:
+				self.set_protein(str(protein_output)+".gz")
 			else:
-				#Metagenome mode for very short genomes.
-				subprocess.call(["prodigal", "-i", str(intermediate), "-p", "meta", "-a", str(output_11), "-q", "-o", str(temp_output)])				
-				subprocess.call(["prodigal", "-i", str(intermediate), "-p", "meta", "-a", str(output_4), "-g", "4", "-q", "-o", str(temp_output)])
-			'''
-			
-			subprocess.call(["prodigal", "-i", str(intermediate), "-a", str(output_11), "-q", "-o", str(temp_output)])				
-			subprocess.call(["prodigal", "-i", str(intermediate), "-a", str(output_4), "-g", "4", "-q", "-o", str(temp_output)])
-			
-			#We can get rid of the temp file immediately, we won't be using it
-			temp_output.unlink()
-			if genome_parser.is_gz:
-				#If the file was copied, delete. Otw. this would delete the input and we don't want that.
-				intermediate.unlink()
-
-			# Compare translation tables
-			length_4 = 0
-			length_11 = 0
-			with open(output_4, 'r') as table_4:
-				for line in table_4:
-					if line.startswith(">"):
-						continue
-					else:
-						length_4 += len(line.strip())
-
-			with open(output_11, 'r') as table_11:
-				for line in table_11:
-					if line.startswith(">"):
-						continue
-					else:
-						length_11 += len(line.strip())
-			
-			#Select the winning translation table and remove the other. Open the winner.
-			if (length_4 / length_11) >= 1.1:
-				output_11.unlink()
-				self.trans_table = "4"
-				chosen_protein = open(output_4, 'r')
-				table_11 = False
-			else:
-				output_4.unlink()
-				self.trans_table = "11"
-				chosen_protein = open(output_11, 'r')
-				table_11 = True
-				
-			destination = open(protein_output, "w")
-			
-			#Clean the winning output.
-			for line in chosen_protein:
-				if line.startswith(">"):
-					destination.write("{}".format(line))
-				else:
-					line = line.replace('*', '')
-					destination.write("{}".format(line))
-			
-			destination.close()
-			chosen_protein.close()
-			
-			# Remove the winning intermediate file, since we have the cleaned output
-			if table_11:
-				output_11.unlink()
-			else:
-				output_4.unlink()
-			
-			self.set_protein(str(protein_output))
+				self.set_protein(str(protein_output))
+				#Clean up a zipped version on reruns
+				if os.path.exists(str(protein_output)+".gz"):
+					os.remove(str(protein_output)+".gz")
 
 	#run hmmsearch on a protein	
 	def protein_to_hmm(self):
 		if self.protein is None:
-			print(self.name, "wasn't a declared as a protein! I can't make this into an HMM!")
+			print(self.basename, "wasn't a declared as a protein! I can't make this into an HMM!")
 		else:
-		
-			folder = Path(self.output + "/hmms")
+
+			folder = os.path.normpath(self.output + "/hmms")
 						
-			hmm_output = folder / (self.basename + '.hmm')
-			temp_output = folder / (self.basename + '.temp')
+			hmm_output = os.path.normpath(folder +"/"+ self.basename + '.hmm')
 			
-			intermediate = folder / (self.basename + '_protein_intermediate.faa')
+			if self.prepared_proteins is None:
+				self.prepared_proteins, deflines = read_fasta(self.proteins)
+
+			hmm_manager.run_for_fastaai(self.prepared_proteins, hmm_output)
 			
-			current_protein = ""
-			current_seq = ""
+			self.ran_hmmer = True
 			
-			protein_parser = agnostic_reader(self.protein)
-			
-			#File was a gzip; decompress it to an intermediate file and then run prodigal; delete after
-			#Keeps track of \n chars in the protein sequences.
-			line_ct = 0
-			midpoint = open(intermediate, "w")
-			
-			for line in protein_parser:
-				if line.startswith(">"):
-					if len(current_seq) > 0:
-						if len(current_seq) < 100000:
-							midpoint.write(current_protein)
-							midpoint.write(current_seq)
-						else:
-							self.err_log += "Protein " + current_protein.strip().split()[0][1:] + " was observed to have >100K amino acids ( " + str(len(current_seq) - line_ct) + " AA found ). It was skipped. "
-							#print("Protein", current_protein.strip()[1:], "was observed to have >100K amino acids (", len(current_seq) - line_ct, "AA found ).", file = sys.stderr)
-							#print("HMMER cannot handle sequences that long, and the protein is almost certainly erroneous, anyway.", file = sys.stderr)
-							#print("The protein will be skipped, and FastAAI will continue without it.", file = sys.stderr)
-							
-					current_protein = line
-					current_seq = ""
-					line_ct = 0
-				else:
-					line_ct += 1
-					current_seq += line
-			
-			protein_parser.close()
-			
-			#Finally, last prot
-			if len(current_seq) > 0:
-				if len(current_seq) < 100000:
-					midpoint.write(current_protein)
-					midpoint.write(current_seq)
-				else:
-					self.err_log += "Protein " + current_protein.strip().split()[0][1:] + " was observed to have >100K amino acids ( " + str(len(current_seq) - line_ct) + " AA found ). It was skipped. "
-					#print("Protein", current_protein.strip()[1:], "was observed to have >100K amino acids (", len(current_seq) - line_ct, "AA found ).", file = sys.stderr)
-					#print("HMMER cannot handle sequences that long, and the protein is almost certainly erroneous, anyway.", file = sys.stderr)
-					#print("The protein will be skipped, and FastAAI will continue without it.", file = sys.stderr)
-			
-			midpoint.close()
-			
-			#Should locate the DBs regardless of path.
-			script_path = Path(__file__)
-			script_dir = script_path.parent
-			hmm_complete_model = script_dir / "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"
-			
-			subprocess.call(["hmmsearch", "--tblout", str(hmm_output), "-o", str(temp_output), "--cut_tc", "--cpu", "1",
-							str(hmm_complete_model), str(intermediate)])
-							
-			temp_output.unlink()
-			intermediate.unlink()
-			
-			self.set_hmm(str(hmm_output))
+			if self.do_compress:
+				self.set_hmm(str(hmm_output)+".gz")
+				if os.path.exists(str(hmm_output)):
+					os.remove(str(hmm_output))
+			else:
+				self.set_hmm(str(hmm_output))
+				if os.path.exists(str(hmm_output)+".gz"):
+					os.remove(str(hmm_output)+".gz")
 	
+	#Translate tetramers to unique int32 indices.
+	def unique_kmer_kmer_index(self, seq):
+		#num tetramers = len(seq) - 4 + 1, just make it -3.
+		n_kmers = len(seq) - 3
+		
+		#group the seq into tetramers, access the index
+		kmers = [kmer_index_[seq[i:i+4]] for i in range(0,n_kmers)]
+		kmers = np.unique(np.array(kmers, dtype=np.int32))
+		
+		#the fixed values effectively offset the successive chars of the tetramer by 2 positions each time; 
+		#practically, this is concatenation of numbers
+		#Matrix mult does this for all values at once.
+		return kmers
+
+	
+	#Translate tetramers to unique int32 indices.
+	def unique_kmer_simple_key(self, seq):
+		#num tetramers = len(seq) - 4 + 1, just make it -3.
+		n_kmers = len(seq) - 3
+		
+		#Converts the characters in a sequence into their ascii int value
+		as_ints = np.array([ord(i) for i in seq], dtype = np.int32)
+		
+		#create seq like 0,1,2,3; 1,2,3,4; 2,3,4,5... for each tetramer that needs a value
+		kmers = np.arange(4*n_kmers)
+		kmers = kmers % 4 + kmers // 4
+		
+		#Select the characters (as ints) corresponding to each tetramer all at once and reshape into rows of 4, 
+		#each row corresp. to a successive tetramer
+		kmers = as_ints[kmers].reshape((n_kmers, 4))
+		
+		#Given four 2-digit numbers, these multipliers work as offsets so that all digits are preserved in order when summed
+		mult = np.array([1000000, 10000, 100, 1], dtype = np.int32)
+		
+		#the fixed values effectively offset the successive chars of the tetramer by 2 positions each time; 
+		#practically, this is concatenation of numbers
+		#Matrix mult does this for all values at once.
+		return np.unique(np.dot(kmers, mult))
+
+	def load_hmm_and_filter_from_file(self, file):
+		pass
+		
+	#This should consider the domain by majority vote...
 	def prot_and_hmm_to_besthits(self):
-		prots = []
-		accs = []
-		scores = []
-		f = agnostic_reader(self.hmm)
-		for line in f:
-			if line.startswith("#"):
-				continue
-			else:
-				segs = line.strip().split()
-				prots.append(segs[0])
-				accs.append(segs[3])
-				scores.append(segs[8])
+		if self.ran_hmmer:
+			#Manager has a filter built in.
 			
-		f.close()
+			self.best_hits = hmm_manager.best_hits
+		else:
+			#Load the best hits file via old numpy method.
+			self.best_hits = self.load_hmm_and_filter_from_file(self.hmm)
 		
-		hmm_file = np.transpose(np.array([prots, accs, scores]))
-		
-		#hmm_file = np.loadtxt(hmm_file_name, comments = '#', usecols = (0, 3, 8), dtype=(str))
-		#Sort the hmm file based on the score column in descending order.
-		hmm_file = hmm_file[hmm_file[:,2].astype(float).argsort()[::-1]]
-		
-		#Identify the first row where each gene name appears, after sorting by score; 
-		#in effect, return the highest scoring assignment per gene name
-		#Sort the indices of the result to match the score-sorted table instead of alphabetical order of gene names
-		hmm_file = hmm_file[np.sort(np.unique(hmm_file[:,0], return_index = True)[1])]
-		
-		#Filter the file again for the unique ACCESSION names, since we're only allowed one gene per accession, I guess?
-		#Don't sort the indices, we don't care about the scores anymore.
-		hmm_file = hmm_file[np.unique(hmm_file[:,1], return_index = True)[1]]
-		
-		self.best_hits = dict(zip(hmm_file[:,0], hmm_file[:,1]))
-		
-		self.best_hits_kmers = {}
-		current_seq = ""
-		current_prot = ""
-		is_besthit = False
-		
-		prot = agnostic_reader(self.protein)
-		
-		for line in prot:
-			
-			if line.startswith(">"):
-				if len(current_seq) > 0:
-					kmer_set = unique_kmers(current_seq, 4)
-					self.protein_kmer_count[current_prot] = kmer_set.shape[0]
-					self.protein_count += 1
-					self.best_hits_kmers[current_prot] = kmer_set
-				#Select the best hit accession for this protein and just record that. We do not care about the names of the proteins.
-				current_prot = line[1:].strip().split(" ")[0]
-				if current_prot in self.best_hits:
-					current_prot = self.best_hits[current_prot]
-					is_besthit = True
-				else:
-					is_besthit = False
-				current_seq = ""
-			else:
-				if is_besthit:
-					current_seq += line.strip()
+		hit_count = 0
 				
-		prot.close()
-	
-		#Final iter. doesn't happen otw.
-		if current_prot in self.best_hits:
-			kmer_set = unique_kmers(current_seq, 4)
-			#kmer_set = [kmer_index[k] for k in  kmer_set]
-			self.protein_kmer_count[current_prot] = kmer_set.shape[0]
-			self.protein_count += 1
-			self.best_hits_kmers[current_prot] = kmer_set
+		#Open a protein file and select best hits from it; kmerize.
+		if self.prepared_proteins is None:
+			self.prepared_proteins, deflines = read_fasta(self.proteins)
+		
+		self.protein_kmer_count = {}
+		self.best_hits_kmers = {}
 			
-		self.status = "finished preprocessing"
-	
+		#from pyrodigal predictions or HMM intermediate production, the sequences are already in mem and don't need read in.
+		for protein in self.prepared_proteins:
+			if protein in self.best_hits:
+				accession = self.best_hits[protein]
+				kmer_set = self.unique_kmer_simple_key(self.prepared_proteins[protein])
+				#kmer_set = self.unique_kmer_kmer_index(self.prepared_proteins[protein])
+				self.protein_kmer_count[accession] = kmer_set.shape[0]
+				self.protein_count += 1
+				self.best_hits_kmers[accession] = kmer_set
+				hit_count += 1
+				
+			#Free the space either way
+			self.prepared_proteins[protein] = None
+			
+		#Final free.
+		self.prepared_proteins = None
+			
+		#No HMM hits.
+		if hit_count == 0:
+			self.is_empty = True
+			
+		self.status = "best hits found"
+
 	def preprocess(self):
 		#There's no advancement stage for protein and HMM
 		if self.status == 'genome':
-			start_time = curtime()
+			start_time = self.curtime()
 			#report = True
 			if self.start_time is None:
 				self.start_time = start_time
@@ -881,9 +1551,8 @@ class input_file:
 			
 			self.genome_to_protein()
 			
-			
 		if self.status == 'protein':
-			start_time = curtime()
+			start_time = self.curtime()
 			#report = True
 			if self.start_time is None:
 				self.start_time = start_time
@@ -894,16 +1563,16 @@ class input_file:
 			self.protein_to_hmm()
 			
 		if self.status == 'protein and hmm':
-			start_time = curtime()
+			start_time = self.curtime()
 			
 			if self.start_time is None:
 				self.start_time = start_time
 				
 			self.prot_and_hmm_to_besthits()
-			
+		
 		#Add an end time if either genome -> protein -> HMM or protein -> HMM happened.
 		if self.start_time is not None:
-			end_time = curtime()
+			end_time = self.curtime()
 			self.end_time = end_time
 		else:
 			#Start was protein+HMM. There was no runtime, and intitial state is p+hmm
@@ -914,43 +1583,12 @@ class input_file:
 		#Protein not generated on this run.
 		if self.trans_table is None:
 			self.trans_table = "unknown"
-	
-	'''
-	Viral functions
-	'''
-	#No translation table comparison for viruses. Slightly reduced logic.
-	def viral_genome_to_protein(self):
-		if self.genome is None:
-			print(self.name, "wasn't a declared as a genome! I can't make this into a protein!")
-		else:
-			folder = Path(self.output + "/predicted_proteins")
-			intermediate_protein_output = folder / (self.basename + '.intermediate.faa')
-			final_protein_output = folder / (self.basename + '.faa')
-			temp_output = folder / (self.basename + '.temp')
-	
-			subprocess.call(["prodigal", "-i", str(self.genome), "-a", str(intermediate_protein_output), "-p", "meta", "-q", "-o", str(temp_output)])
 			
-				# Remove intermediate files
-			temp_output.unlink()
-			
-			chosen_protein = open(intermediate_protein_output, 'r')
-			destination = open(final_protein_output, "w")
-			
-			for line in chosen_protein:
-				if line.startswith(">"):
-					destination.write("{}".format(line))
-				else:
-					line = line.replace('*', '')
-					destination.write("{}".format(line))
-	
-			destination.close()
-			chosen_protein.close()
-			
-			intermediate_protein_output.unlink()
-			
-			self.protein = str(protein_output)
-			self.status = 'protein'
-	
+
+def run_preprocesing(input_file):
+	input_file.preprocess()
+	return(input_file)
+
 
 '''
 Preprocessing functions
@@ -959,7 +1597,29 @@ Read directories, advance files to hmms as needed.
 '''
 #Toy function for passing to a pool
 def do_advance(input_file_object):
-	input_file_object.preprocess()
+	try:
+		input_file_object.preprocess()
+	except:
+		print(input_file.name, "failed and will be skipped.")
+		#Pass condition on return
+		input_file.best_hits_kmers = 0
+		#Clean ups on created files.
+		if input_file.initial_state == "genome":
+			try:
+				os.remove(input_file.protein)
+			except:
+				pass
+			try:
+				os.remove(input_file.hmm)
+			except:
+				pass
+		if input_file.initial_state == "protein":
+			try:
+				os.remove(input_file.hmm)
+			except:
+				pass
+			
+		
 	return input_file_object
 
 def initialize_preproc(index):
@@ -1097,11 +1757,35 @@ def advance_inputs(genomes = None, proteins = None, hmms = None, genomes_file = 
 	
 	results = []
 	
+	hmm_path = None
+	try:
+		#Try to locate the data bundled as it would be with a pip/conda install.
+		script_path = os.path.dirname(sys.modules['fastAAI_HMM_models'].__file__)
+		if len(script_path) == 0:
+			script_path = "."
+		hmm_complete_model = os.path.abspath(os.path.normpath(script_path + '/00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm'))
+		hmm_path = str(hmm_complete_model)
+		#Check that the file exists or fail to the except.
+		fh = open(hmm_path)
+		fh.close()
+	except:
+		#Look in the same dir as the script; old method/MiGA friendly
+		script_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+		if len(script_path) == 0:
+			script_path = "."
+		hmm_complete_model = os.path.abspath(os.path.normpath(script_path +"/"+ "00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm"))
+		hmm_path = str(hmm_complete_model)
+	
 	kmer_index_ = create_kmer_index()
-	pool = multiprocessing.Pool(threads, initializer=initialize_preproc, initargs = (kmer_index_,))
+	pool = multiprocessing.Pool(threads, initializer = hmm_preproc_initializer, initargs = (hmm_path, False,))
 	
 	for res in pool.imap(do_advance, inputs):
-		results.append(res)
+		#Make a check for zero accessions
+		if len(res.best_hits_kmers) == 0:
+			pass
+		else:
+			results.append(res)
+			
 		if verbose:
 		#progress bar - possible dangerous use of the return to line start sequence.
 			try:
@@ -1277,20 +1961,20 @@ def list_to_index_dict(list):
 	return result
 
 def generate_accessions_index():
-	list_of_poss_accs = list_to_index_dict(['PF01780.19', 'PF03948.14', 'PF17144.4', 'PF00830.19', 'PF00347.23', 'PF16906.5', 'PF13393.6',
-	'PF02565.15', 'PF01991.18', 'PF01984.20', 'PF00861.22', 'PF13656.6', 'PF00368.18', 'PF01142.18', 'PF00312.22', 'PF02367.17',
-	'PF01951.16', 'PF00749.21', 'PF01655.18', 'PF00318.20', 'PF01813.17', 'PF01649.18', 'PF01025.19', 'PF00380.19', 'PF01282.19',
-	'PF01864.17', 'PF01783.23', 'PF01808.18', 'PF01982.16', 'PF01715.17', 'PF00213.18', 'PF00119.20', 'PF00573.22', 'PF01981.16',
-	'PF00281.19', 'PF00584.20', 'PF00825.18', 'PF00406.22', 'PF00177.21', 'PF01192.22', 'PF05833.11', 'PF02699.15', 'PF01016.19',
-	'PF01765.19', 'PF00453.18', 'PF01193.24', 'PF05221.17', 'PF00231.19', 'PF00416.22', 'PF02033.18', 'PF01668.18', 'PF00886.19',
-	'PF00252.18', 'PF00572.18', 'PF00366.20', 'PF04104.14', 'PF04919.12', 'PF01912.18', 'PF00276.20', 'PF00203.21', 'PF00889.19',
-	'PF02996.17', 'PF00121.18', 'PF01990.17', 'PF00344.20', 'PF00297.22', 'PF01196.19', 'PF01194.17', 'PF01725.16', 'PF00750.19',
-	'PF00338.22', 'PF00238.19', 'PF01200.18', 'PF00162.19', 'PF00181.23', 'PF01866.17', 'PF00709.21', 'PF02006.16', 'PF00164.25',
-	'PF00237.19', 'PF01139.17', 'PF01351.18', 'PF04010.13', 'PF06093.13', 'PF00828.19', 'PF02410.15', 'PF01176.19', 'PF02130.17',
-	'PF01948.18', 'PF01195.19', 'PF01746.21', 'PF01667.17', 'PF03874.16', 'PF01090.19', 'PF01198.19', 'PF01250.17', 'PF17136.4',
-	'PF06026.14', 'PF03652.15', 'PF04019.12', 'PF01201.22', 'PF00832.20', 'PF01264.21', 'PF03840.14', 'PF00831.23', 'PF00189.20',
-	'PF02601.15', 'PF01496.19', 'PF00411.19', 'PF00334.19', 'PF00687.21', 'PF01157.18', 'PF01245.20', 'PF01994.16', 'PF01632.19',
-	'PF00827.17', 'PF01015.18', 'PF00829.21', 'PF00410.19', 'PF00833.18', 'PF00935.19', 'PF01992.16'])
+	list_of_poss_accs = list_to_index_dict(['PF01780_19', 'PF03948_14', 'PF17144_4', 'PF00830_19', 'PF00347_23', 'PF16906_5', 'PF13393_6',
+	'PF02565_15', 'PF01991_18', 'PF01984_20', 'PF00861_22', 'PF13656_6', 'PF00368_18', 'PF01142_18', 'PF00312_22', 'PF02367_17',
+	'PF01951_16', 'PF00749_21', 'PF01655_18', 'PF00318_20', 'PF01813_17', 'PF01649_18', 'PF01025_19', 'PF00380_19', 'PF01282_19',
+	'PF01864_17', 'PF01783_23', 'PF01808_18', 'PF01982_16', 'PF01715_17', 'PF00213_18', 'PF00119_20', 'PF00573_22', 'PF01981_16',
+	'PF00281_19', 'PF00584_20', 'PF00825_18', 'PF00406_22', 'PF00177_21', 'PF01192_22', 'PF05833_11', 'PF02699_15', 'PF01016_19',
+	'PF01765_19', 'PF00453_18', 'PF01193_24', 'PF05221_17', 'PF00231_19', 'PF00416_22', 'PF02033_18', 'PF01668_18', 'PF00886_19',
+	'PF00252_18', 'PF00572_18', 'PF00366_20', 'PF04104_14', 'PF04919_12', 'PF01912_18', 'PF00276_20', 'PF00203_21', 'PF00889_19',
+	'PF02996_17', 'PF00121_18', 'PF01990_17', 'PF00344_20', 'PF00297_22', 'PF01196_19', 'PF01194_17', 'PF01725_16', 'PF00750_19',
+	'PF00338_22', 'PF00238_19', 'PF01200_18', 'PF00162_19', 'PF00181_23', 'PF01866_17', 'PF00709_21', 'PF02006_16', 'PF00164_25',
+	'PF00237_19', 'PF01139_17', 'PF01351_18', 'PF04010_13', 'PF06093_13', 'PF00828_19', 'PF02410_15', 'PF01176_19', 'PF02130_17',
+	'PF01948_18', 'PF01195_19', 'PF01746_21', 'PF01667_17', 'PF03874_16', 'PF01090_19', 'PF01198_19', 'PF01250_17', 'PF17136_4',
+	'PF06026_14', 'PF03652_15', 'PF04019_12', 'PF01201_22', 'PF00832_20', 'PF01264_21', 'PF03840_14', 'PF00831_23', 'PF00189_20',
+	'PF02601_15', 'PF01496_19', 'PF00411_19', 'PF00334_19', 'PF00687_21', 'PF01157_18', 'PF01245_20', 'PF01994_16', 'PF01632_19',
+	'PF00827_17', 'PF01015_18', 'PF00829_21', 'PF00410_19', 'PF00833_18', 'PF00935_19', 'PF01992_16'])
 	
 	return list_of_poss_accs
 
@@ -1335,6 +2019,7 @@ def add_inputs(output_path, parent_path, existing_index, threads, verbose, prep_
 	#unique_accessions = set()
 	for file in inputs:
 		
+		#genome = file.basenames
 		genome = file.basename
 		
 		#Collect all of the accessions actually found. Will usually be 122 for reasonably sized datasets.
@@ -2165,8 +2850,8 @@ def do_sql_query(args):
 	shared_acc_counts = np.zeros(target_len, dtype = np.int16)
 	
 	for accession in acc_kmers:
-		acc_index = accession_index[accession]
 		sql_friendly_accession = accession.replace(".", "_")
+		acc_index = accession_index[sql_friendly_accession]
 		if acc_index in database.accessions:
 			temp_name = name+"_"+sql_friendly_accession
 			#The accession was found for this target genome, for each tgt genome.
@@ -2174,7 +2859,7 @@ def do_sql_query(args):
 			
 			#Miguel issue redev.
 			these_kmers = [(int(kmer),) for kmer in acc_kmers[accession]]
-			temp_name = name+"_"+sql_friendly_accession
+			temp_name = "_" + name+"_"+sql_friendly_accession
 			temp_name = temp_name.replace(".", "_")
 			
 			temp_tab = "CREATE TEMP TABLE " + temp_name + " (kmer INTEGER)"
@@ -2256,15 +2941,15 @@ def do_sql_query_no_SD(args):
 	shared_acc_counts = np.zeros(target_len, dtype = np.int16)
 	
 	for accession in acc_kmers:
-		acc_index = accession_index[accession]
 		sql_friendly_accession = accession.replace(".", "_")
+		acc_index = accession_index[sql_friendly_accession]
 		if acc_index in database.accessions:
 			#The accession was found for this target genome, for each tgt genome.
 			shared_acc_counts[np.nonzero(target_kmer_cts[acc_index])] += 1
 			
 			these_kmers = [(int(kmer),) for kmer in acc_kmers[accession]]
 			#Miguel issue redev.
-			temp_name = name+"_"+sql_friendly_accession
+			temp_name = "_" + name+"_"+sql_friendly_accession
 			temp_name = temp_name.replace(".", "_")
 			
 			temp_tab = "CREATE TEMP TABLE " + temp_name + " (kmer INTEGER)"
@@ -3379,12 +4064,116 @@ def multi_query(query_arg_list, target_arg_list, shared_args):
 	
 	db_query(accessible_name_query, accessible_name_target, verbose, output, threads, do_stdev, mem, efficient)
 
+	
+#Manages the query process.
+def miga_merge_opts():
+	parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
+			description='''
+	This FastAAI module is intended for internal use by the Microbial Genomes Atlas (MiGA).
+	
+	It preprocesses a single genome and adds it to an existing database with some assumptions to make the process faster.
+	''')
+
+	parser.add_argument('--target',   dest = 'target', default = None,   help =   'A path to the FastAAI database you wish to use as the target')
+
+	parser.add_argument('--genome_file',    dest = 'gf', default = None, help =  'A single FASTA format genome file')
+	parser.add_argument('--protein_file',   dest = 'pf', default = None, help =  'A single FASTA format AA protein file')
+	parser.add_argument('--hmm_file',       dest = 'hf', default = None, help =  'A single FastAAI HMM result file.')
+	
+	parser.add_argument('--verbose',        dest = 'verbose', action='store_true', help = 'Print minor updates to console. Major updates are printed regardless.')
+		
+	args, unknown = parser.parse_known_args()
+	
+	return parser, args
+	
+	
+def miga_merge(gf, pf, hf, target, verbose):
+	#Temp dir for the outputs
+	output = tempfile.mkdtemp()
+	manager = None
+	if gf is not None:
+		manager = input_file(gf, output, verbose)
+		manager.set_genome(gf)
+		
+	if pf is not None and manager is not None:
+		manager.set_protein(pf)
+		
+	if pf is not None and manager is None:
+		manager = input_file(pf, output, verbose)
+		manager.set_protein(pf)
+		
+	#We don't need to worry about the hmm file having a none manager - if it does, it's already broke.
+	if hf is not None and manager is not None:
+		manager.set_hmm(hf)
+		
+	if manager is None:
+		print("Something went wrong! I didn't get any files!")
+	else:
+		global kmer_index
+		kmer_index = create_kmer_index()
+		manager.preprocess()
+		
+		acc_index = generate_accessions_index()
+
+		tgt = fastaai_database(target)
+		tgt.activate_connection()
+		tgt.just_accessions()
+		tgt.load_genome_index()
+		
+		if manager.basename not in tgt.genome_index:
+			
+			my_index = max(list(tgt.genome_index.values())) + 1
+			
+			genome_byte = np.array(my_index, dtype = np.int32)
+			genome_byte = genome_byte.tobytes()
+			
+			#for adding to genome acc kmer count table
+			gak = []
+			for scg in manager.best_hits:
+				scg_hit = manager.best_hits[scg]
+				sql_friendly = scg_hit.replace('.', '_')
+				acc_num = acc_index[scg_hit]
+				
+				gak.append((my_index, acc_num, manager.protein_kmer_count[scg_hit],))
+				#Add to each row
+				genome_row = {my_index : manager.best_hits_kmers[scg_hit]}
+				
+				tgt.add_genomes_first(scg_hit, genome_row)
+				
+				#Prepare for insertion
+				my_kmer_list = []
+				for kmer in manager.best_hits_kmers[scg_hit]:
+					my_kmer_list.append((int(kmer), genome_byte, genome_byte,))
+				
+				if acc_num not in tgt.accessions:
+					#If we need to, make new table
+					tgt.cursor.execute("CREATE TABLE " + sql_friendly + " (kmer INTEGER PRIMARY KEY, genomes array)")
+					tgt.connection.commit()
+				
+				modifier_sql = "INSERT INTO "+sql_friendly + " VALUES (?, ?) ON CONFLICT(kmer) DO UPDATE SET genomes=genomes || (?)"  
+				tgt.cursor.executemany(modifier_sql, my_kmer_list)
+				tgt.connection.commit()
+			
+			#And add to the GAK.
+			gak_sql = "INSERT OR REPLACE INTO genome_acc_kmer_counts VALUES (?,?,?)"
+			tgt.cursor.executemany(gak_sql, gak)
+			tgt.connection.commit()
+			
+			#Update the genome table
+			tgt.cursor.execute("INSERT OR REPLACE INTO genome_index VALUES (?, ?, ?)", (manager.basename, my_index, manager.protein_count))
+			tgt.connection.commit()
+		
+		#We open either way, so we close either way.
+		tgt.close_connection()
+		
+		return None
+	
 '''
 Main
 '''
 def main():
 	#The currently supported modules.
-	modules = ["build_db", "merge_db", "simple_query", "db_query", "single_query", "aai_index", "multi_query"]
+	modules = ["build_db", "merge_db", "simple_query", "db_query", "single_query", "aai_index", "multi_query", "miga_merge"]
 	
 	#Print modules if someone just types FastAAI
 	if len(sys.argv) < 2:
@@ -3667,6 +4456,24 @@ def main():
 
 		multi_query(query_arg_list, target_arg_list, shared_arg_list)
 		
+############## Super duper secret MiGA module #################
+	if selection == "miga_merge":
+		parser, opts = miga_merge_opts()
+		
+		#module name only
+		if len(sys.argv) < 3:
+			print(parser.print_help())
+			sys.exit()
+		
+		#file based
+		gf, pf, hf = opts.gf, opts.pf, opts.hf
+		
+		target = opts.target
+		
+		verbose = opts.verbose
+		
+		miga_merge(gf, pf, hf, target, verbose)
+	
 	return None
 	
 
