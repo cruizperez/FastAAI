@@ -66,7 +66,7 @@ Inputs of each type (genome, protein, HMM) can be given in one of three ways:
 FastAAI will automatically detect the way you supply inputs.
 
 #### HMM Files
-In this repositoriy, you can find FastAAI's single copy protein HMM models under the heading of 00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm. An HMM file produced by FastAAI will be the result of a search against this collection of models. Any FastAAI HMM search can be replicated with the following command:
+In this repositoriy, you can find FastAAI's single copy protein HMM models under the heading of 00.Libraries/01.SCG_HMMs/Complete_SCG_DB.hmm. An HMM file produced by FastAAI will be the result of a search against this collection of models. While FastAAI uses [PyHMMER](https://github.com/althonos/pyhmmer) to implement its HMM search, any FastAAI HMM search can also be replicated with the following command:
 
 ```bash
 hmmsearch --tblout [FastAAI_HMM_file] -o [file_to_dsiscard] --cut_tc Complete_SCG_DB.hmm [input_proteome_file]
@@ -88,10 +88,17 @@ Additional notes:
 
 ### Database creation
 
-The build_db module of FastAAI is designed to take a set of inputs, preprocess them and build a database from those inputs. Inputs are discussed above.
+The build_db module of FastAAI is designed to take a set of inputs, preprocess them and build a database from those inputs. Input formatting is discussed above.
 
 #### Preprocessing:
-Preprocessing consists of detecting the input format 
+Preprocessing consists of detecting the input format and (for genome inputs) predicting the proteome for each genome using [Pyrodigal](https://github.com/althonos/pyrodigal), (for genome and protein inputs) searching proteomes against FastAAI's set of SCP HMMs using PyHMMER, and (for all input types) extracting the unique tetramer sets of each SCP protein identified as a bidirectional best-match by HMMER. The final result of preprocessing for each genome is a list SCPs, each with the unique amino acid tetramer set for the corresponding protein.
+
+#### Identification of best-matching SCPs
+An HMM search consists of searching protein sequences against a prebuilt model. Proteins matching models below a cutoff are not reported by FastAAI. Where FastAAI is concerned, three remaining features are important: the SCP accession, protein ID, and HMM score. The score of a protein indicates the quality of match to the associated SCP, where higher scores indicate better matches. 
+
+Among the proteins that pass the initial filter, FastAAI identifies the highest scoring SCP assignment for each protein and the highest scoring assignment for each SCP. If a protein appears multiple times (that is, it matched to more than one SCP), then only the protein's highest scoring match is considered and the others are discarded. Likewise, if an SCP appears multiple times in the results (that is, multiple proteins matched to it), then only the highest scoring protein is retained for that SCP. Bidirectional best-matches are the remaining protein-SCP pairs. This all means that for each best-match between a protein and SCP, the protein's highest scoring match and the SCP's highest scoring match must be their counterpart in the pair.
+
+A consequence of this approach is that each SCP can appear only once for each genome and each protein in a proteome can only be the representative for one SCP. 
 
 #### Database construction:
 
