@@ -56,7 +56,7 @@ The five FastAAI commands are
 ## General Topics
 
 #### Input files and their formats
-FastAAI takes genomes, proteins, and HMM files (see below) as its basic inputs. Genomes are expected to be supplied in nucleotide FASTA format, with each genome (even if they are collections of multiple contigs) to be in a single, separate file. Each protein file is expected to contain the predicted proteome of a single genome in amino acid FASTA format. Each HMM file is expected to be the tabular output resulting from a search of a single genome's proteome against FastAAI's reference set of HMM models.
+FastAAI takes genomes, proteins, and tabular HMM search files (see below) as its basic inputs. Genomes are expected to be supplied in nucleotide FASTA format, with each genome (even if they are collections of multiple contigs) to be in a single, separate file. Each protein file is expected to contain the predicted proteome of a single genome in amino acid FASTA format. Each HMM file is expected to be the tabular output resulting from a search of a single genome's proteome against FastAAI's reference set of HMM models.
 
 Inputs of each type (genome, protein, HMM) can be given in one of three ways:
 * As a directory: a path to a directory containing only files of a particular type
@@ -98,9 +98,10 @@ An HMM search consists of searching protein sequences against a prebuilt model. 
 
 Among the proteins that pass the initial filter, FastAAI identifies the highest scoring SCP assignment for each protein and the highest scoring assignment for each SCP. If a protein appears multiple times (that is, it matched to more than one SCP), then only the protein's highest scoring match is considered and the others are discarded. Likewise, if an SCP appears multiple times in the results (that is, multiple proteins matched to it), then only the highest scoring protein is retained for that SCP. Bidirectional best-matches are the remaining protein-SCP pairs. This all means that for each best-match between a protein and SCP, the protein's highest scoring match and the SCP's highest scoring match must be their counterpart in the pair.
 
-A consequence of this approach is that each SCP can appear only once for each genome and each protein in a proteome can only be the representative for one SCP. 
+A consequence of this approach is that each SCP can appear only once for each genome and each protein in a proteome can only be the representative for one SCP. A genome can have as little as one SCP or as many as 122 - more typically, a genome will have 50-90.
 
 #### Database construction:
+
 
 
 ## FAQs
