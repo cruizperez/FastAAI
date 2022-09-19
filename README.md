@@ -7,11 +7,12 @@ Fast estimation of Average Amino Acid Identities (AAI) for bacterial and archaea
   * [Requirements](#requirements)
   * [Installation](#installation)
   * [Usage](#usage)
-  * [FAQs](#faqs)
+  * [Example](#example)
+  * [Additional Information](#info)
   * [License](#license)
 
 ## Features
-Coming soon
+* 
 
 ## Citation
 Coming soon
@@ -53,7 +54,51 @@ The five FastAAI commands are
 * db_query - Query the genomes in one FastAAI database against the genomes in another (or itself). Calculate AAI for each genome pair between the two.
 * single_query - Input exactly two genomes; preprocess as needed and calculate AAI between the pair of genomes.
 
-## General Topics
+## Example
+
+Let's say we have a collection of genomes in a folder labeled "example_genomes" (which you can find in this respository). Each genome in the folder is in its own nucleotide FASTA-format file. The files can be gzipped or uncompressed - FastAAI doesn't care. The ones in the folder here are gzipped.
+
+The first step is building a database. Here's an example command to do so:
+
+```bash
+fastaai build_db --genomes example_genomes/ --threads 4 --verbose --output example_build --database my_example_db.db --compress
+```
+
+This will create a folder called "example_build" which contains subfolders named "predicted_proteins," "hmms", "database", and "logs." The logs folder will contain a file named "FastAAI_preprocessing_log.txt," recording information about the protein prediction and HMM search results for each queryy genome. Finally, the database folder will contain "my_example_db.db," which is your completed FastAAI database.
+
+Because we used the --compress flag, files in the predicted_proteins and hmms folders will be gzipped upon output, and because we used the --verbose flag, we'll get a progress report as FastAAI works that will look like so:
+
+Completion |###############                               |   30.00% ( 3 of 10 ) at 19/09/2022 13:56:41
+
+The report only updates every 2% completion, so it may be some time between updates if you're running hundreds or thousands of genomes. A build_db command will have two progress bars, one for preprocessing and one for database formatting, but they'll all look like so.
+
+Next, we can calculate AAI:
+
+```bash
+fastaai db_query --query example_build/database/my_example_db.db --target example_build/database/my_example_db.db --threads 4 --verbose --output example_build
+```
+
+By supplying the same database as query and target, we'll be calculating an all vs. all AAI estimation for the genomes in the database. This will our all vs. all estimate for the genomes we had in our "example_genomes" folder.
+
+We didn't supply --output_style matrix, so we'll be getting tabular output files. We also didn't tell FastAAI to calculate standard deviations with --do_stdev, so the fourth column will be all N/A. These files will be in example_build/results/, since we gave the same directory base as the output location.
+
+When it's done (which should take less than a second), you'll find files that look like this:
+
+query	target	avg_jacc_sim	jacc_SD	num_shared_SCPs	poss_shared_SCPs	AAI_estimate
+
+_Pseudomonas__cissicola_GCA_002019225_1.fna.gz	Xanthomonas_albilineans_GCA_000962915_1.fna.gz	0.5199	N/A	79	79	68.75
+
+_Pseudomonas__cissicola_GCA_002019225_1.fna.gz	Xanthomonas_albilineans_GCA_000962925_1.fna.gz	0.5176	N/A	79	79	68.63
+
+_Pseudomonas__cissicola_GCA_002019225_1.fna.gz	Xanthomonas_albilineans_GCA_000962935_1.fna.gz	0.5193	N/A	79	79	68.72
+
+_Pseudomonas__cissicola_GCA_002019225_1.fna.gz	Xanthomonas_albilineans_GCA_000962945_1.fna.gz	0.5189	N/A	79	79	68.7
+
+...
+
+That's it!
+
+## Additional Information
 
 #### Input files and their formats
 FastAAI takes genomes, proteins, and tabular HMM search files (see below) as its basic inputs. Genomes are expected to be supplied in nucleotide FASTA format, with each genome (even if they are collections of multiple contigs) to be in a single, separate file. Each protein file is expected to contain the predicted proteome of a single genome in amino acid FASTA format. Each HMM file is expected to be the tabular output resulting from a search of a single genome's proteome against FastAAI's reference set of HMM models.
@@ -144,53 +189,6 @@ The matrix format ("--output_style matrix") produces a tab-separated matrix cont
 These changes to avoid text labelling were done to make working with the (often quite large) tabular results in subsequent analyses using R, Python, or another language easier, as all of the results are already in numerical format. 
 
 None of the other data aside from the estimated AAI is available in the matrix-formatted output.
-
-#### Example Usage
-
-Let's say we have a collection of genomes in a folder labeled "example_genomes." Each genome in the folder is in its own nucleotide FASTA-format file. The files can be gzipped or uncompressed - FastAAI doesn't care.
-
-The first step is building a database. Here's an example command to do so:
-
-```bash
-fastaai build_db --genomes example_genomes/ --threads 4 --verbose --output example_build --database my_example_db.db --compress
-```
-
-This will create a folder called "example_build" which contains subfolders named "predicted_proteins," "hmms", "database", and "logs." The logs folder will contain a file named "FastAAI_preprocessing_log.txt," recording information about the protein prediction and HMM search results for each queryy genome. Finally, the database folder will contain "my_example_db.db," which is your completed FastAAI database.
-
-Because we used the --compress flag, files in the predicted_proteins and hmms folders will be gzipped upon output, and because we used the --verbose flag, we'll get a progress report as FastAAI works that will look like so:
-
-Completion |###############                               |   30.00% ( 3 of 10 ) at 19/09/2022 13:56:41
-
-The report only updates every 2% completion, so it may be some time between updates if you're running hundreds or thousands of genomes. A build_db command will have two progress bars, one for preprocessing and one for database formatting, but they'll all look like so.
-
-Next, we can calculate AAI:
-
-```bash
-fastaai db_query --query example_build/database/my_example_db.db --target example_build/database/my_example_db.db --threads 4 --verbose --output example_build
-```
-
-By supplying the same database as query and target, we'll be calculating an all vs. all AAI estimation for the genomes in the database. This will our all vs. all estimate for the genomes we had in our "example_genomes" folder.
-
-We didn't supply --output_style matrix, so we'll be getting tabular output files. These will be in example_build/results/, since we gave the same directory base as the output location.
-
-When it's done (which should take less than a second), you'll find files that look like this:
-
-query	target	avg_jacc_sim	jacc_SD	num_shared_SCPs	poss_shared_SCPs	AAI_estimate
-
-_Pseudomonas__cissicola_GCA_002019225_1.fna.gz	Xanthomonas_albilineans_GCA_000962915_1.fna.gz	0.5199	N/A	79	79	68.75
-
-_Pseudomonas__cissicola_GCA_002019225_1.fna.gz	Xanthomonas_albilineans_GCA_000962925_1.fna.gz	0.5176	N/A	79	79	68.63
-
-_Pseudomonas__cissicola_GCA_002019225_1.fna.gz	Xanthomonas_albilineans_GCA_000962935_1.fna.gz	0.5193	N/A	79	79	68.72
-
-_Pseudomonas__cissicola_GCA_002019225_1.fna.gz	Xanthomonas_albilineans_GCA_000962945_1.fna.gz	0.5189	N/A	79	79	68.7
-
-...
-
-That's it!
-
-## FAQs
-Coming soon
 
 ## License
 
