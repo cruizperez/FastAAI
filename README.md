@@ -159,7 +159,7 @@ This will create a folder called "example_build" which contains subfolders named
 
 Because we used the --compress flag, files in the predicted_proteins and hmms folders will be gzipped upon output, and because we used the --verbose flag, we'll get a progress report as FastAAI works that will look like so:
 
-Completion |###############                                   |   30.00% ( 3 of 10 ) at 19/09/2022 13:56:41
+Completion |###############                               |   30.00% ( 3 of 10 ) at 19/09/2022 13:56:41
 
 The report only updates every 2% completion, so it may be some time between updates if you're running hundreds or thousands of genomes. A build_db command will have two progress bars, one for preprocessing and one for database formatting, but they'll all look like so.
 
@@ -176,10 +176,15 @@ We didn't supply --output_style matrix, so we'll be getting tabular output files
 When it's done (which should take less than a second), you'll find files that look like this:
 
 query	target	avg_jacc_sim	jacc_SD	num_shared_SCPs	poss_shared_SCPs	AAI_estimate
+
 _Pseudomonas__cissicola_GCA_002019225_1.fna.gz	Xanthomonas_albilineans_GCA_000962915_1.fna.gz	0.5199	N/A	79	79	68.75
+
 _Pseudomonas__cissicola_GCA_002019225_1.fna.gz	Xanthomonas_albilineans_GCA_000962925_1.fna.gz	0.5176	N/A	79	79	68.63
+
 _Pseudomonas__cissicola_GCA_002019225_1.fna.gz	Xanthomonas_albilineans_GCA_000962935_1.fna.gz	0.5193	N/A	79	79	68.72
+
 _Pseudomonas__cissicola_GCA_002019225_1.fna.gz	Xanthomonas_albilineans_GCA_000962945_1.fna.gz	0.5189	N/A	79	79	68.7
+
 ...
 
 That's it!
