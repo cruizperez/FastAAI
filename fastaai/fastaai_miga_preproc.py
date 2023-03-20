@@ -563,11 +563,12 @@ class pyhmmer_manager:
 			self.best_hits = None
 
 class mining_straight_down:
-	def __init__(self, basename = None, protein_list = None, crystal_output = None):
+	def __init__(self, basename = None, protein_list = None, crystal_output = None, compress  = False):
 		self.basename = basename
 		self.proteins_to_format = protein_list
 		self.output_file = crystal_output
 		self.formatted_data = None
+		self.do_compress = compress
 		
 	#Translate tetramers to unique int32 indices.
 	def unique_kmer_simple_key(self, seq):
@@ -605,8 +606,18 @@ class mining_straight_down:
 			self.formatted_data["protein_data"][acc] = {"protein_name":prot, "kmers":kmerized_seq}
 			
 	def to_json(self):
-		with open(self.output_file, "w") as fh:
-			json.dump(self.formatted_data, fh, indent = 4)
+		if self.do_compress:
+			if not self.output_file.endswith(".gz"):
+				self.output_file += ".gz"
+				
+			self.formatted_data = json.dumps(self.formatted_data, indent = 4) #Convert to JSON
+			self.formatted_data = self.formatted_data.encode('utf-8') #Encode to binary
+			with gzip.open(self.output_file, 'wb') as fh:
+				fh.write(self.formatted_data)
+				
+		else:
+			with open(self.output_file, "w") as fh:
+				json.dump(self.formatted_data, fh, indent = 4)
 			
 class input_file:
 	def __init__(self, genome = None, protein = None, hmm = None, #data inputs
@@ -817,7 +828,7 @@ class input_file:
 		cleaned_prots = None
 		
 	def crystalize(self):
-		mn = mining_straight_down(basename = self.basename, protein_list = self.proteins, crystal_output = self.crystal_output)
+		mn = mining_straight_down(basename = self.basename, protein_list = self.proteins, crystal_output = self.crystal_output, compress = self.do_compress)
 		mn.prepare_data()
 		mn.to_json()
 	

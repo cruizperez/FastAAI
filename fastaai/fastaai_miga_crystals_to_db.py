@@ -4,6 +4,7 @@ import os
 import gzip
 import argparse 
 import json
+import gzip
 
 import numpy as np
 
@@ -140,8 +141,14 @@ class ravenous_crystal_lizard:
 		self.gak = []
 		current_index = 0
 		for crystal in self.input_paths:
-			with open(crystal) as fh:
-				next_crystal = json.load(fh)
+			if crystal.endswith(".gz"):
+				with gzip.open(crystal, "rb") as fh:
+					next_crystal = fh.read()
+					next_crystal = next_crystal.decode('utf-8')
+					next_crystal = json.loads(next_crystal)
+			else:
+				with open(crystal, "r") as fh:
+					next_crystal = json.load(fh)
 				
 			filename = next_crystal["filename"]
 			next_crystal = next_crystal["protein_data"]
