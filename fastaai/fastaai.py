@@ -149,16 +149,19 @@ class fasta_file:
 		
 		self.tuple_structure = namedtuple("fasta", ["seqid", "description", "sequence"])
 		self.contents = {}
+		self.sequences = None
 		
 	def convert(self, contents, descriptions):
 		for protein in contents:
 			self.contents = self.tuple_structure(seqid = protein, description = descriptions[protein], sequence = contents[protein])
 			
 	
-	def def_import_file(self):
+	def import_fasta(self):
 		contents, descriptions = read_fasta(self.file_path)
+		self.sequences = contents
 		self.convert(contents, descriptions)
-		
+
+#Old but contains some useful code		
 class pyhmmer_manager:
 	def __init__(self, do_compress):
 		self.hmm_model = []
@@ -390,35 +393,36 @@ class pyhmmer_manager:
 					self.best_hits.pop(key)
 				
 	def to_hmm_file(self, output):
-		#PyHMMER data is a bit hard to parse. For each result:
-		
-		content = '\n'.join(self.printable_lines) + '\n'
-		
-		if self.do_compress:
-			#Clean
-			if os.path.exists(output):
-				os.remove(output)
+		if output is not None:
+			#PyHMMER data is a bit hard to parse. For each result:
+			
+			content = '\n'.join(self.printable_lines) + '\n'
+			
+			if self.do_compress:
+				#Clean
+				if os.path.exists(output):
+					os.remove(output)
+					
+				content = content.encode()
+							
+				fh = gzip.open(output+".gz", "wb")
+				fh.write(content)
+				fh.close()
+				content = None
 				
-			content = content.encode()
-						
-			fh = gzip.open(output+".gz", "wb")
-			fh.write(content)
-			fh.close()
+			else:
+				#Clean
+				if os.path.exists(output+".gz"):
+					os.remove(output+".gz")
+					
+				fh = open(output, "w")
+				
+				fh.write(content)
+					
+				fh.close()
+				
 			content = None
 			
-		else:
-			#Clean
-			if os.path.exists(output+".gz"):
-				os.remove(output+".gz")
-				
-			fh = open(output, "w")
-			
-			fh.write(content)
-				
-			fh.close()
-			
-		content = None
-		
 	#If we're doing this step at all, we've either loaded the seqs into mem by reading the prot file
 	#or have them in mem thanks to pyrodigal.
 	def run_for_fastaai(self, prots, hmm_output):
@@ -435,120 +439,246 @@ class pyhmmer_manager:
 			print(output, "failed to run through HMMER!")
 			self.best_hits = None
 
+class new_pyhmmer_manager:
+	def __init__(self, compress = True):
+		self.proteins = None
+		self.hmm_models = None
 		
+		self.nt_easel = pyhmmer.easel.Alphabet.dna()
+		self.amino_easel = pyhmmer.easel.Alphabet.amino()
+		
+		self.proteins_to_search = None
+		
+		self.hmm_result_proteins = []
+		self.hmm_result_accessions = []
+		self.hmm_result_scores = []
+		
+		self.printable_lines = []
+		
+		self.best_hits = None
+		
+		self.do_compress = compress
+		
+	def load_hmm_from_file(self, hmm_file):
+		ar = agnostic_reader(hmm_file)
+		hmm_text = ar.read()
+		hmm_io = io.BytesIO(hmm_text.encode(encoding = "ascii"))
+		self.convert_hmm_to_digital(hmm_io)
+			
+			
+	def convert_hmm_to_digital(self, hmm_io):
+		with pyhmmer.plan7.HMMFile(hmm_io) as fh:
+			hmms = list(fh)
+			
+		self.hmm_models = hmms
+		
+	def load_protein_seqs_from_file(self, protein_file):
+		ff = fasta_file(protein_file)
+		ff.import_fasta()
+		
+		seqdict = ff.sequences
+		
+		self.convert_protein_seqs_in_mem(seqdict)
+		
+	def convert_protein_seqs_in_mem(self, contents):
+		#Clean up.
+		self.proteins_to_search = []
+		
+		for protein in contents:
+			#Skip a protein if it's longer than 100k AA.
+			if len(contents[protein]) >= 100000:
+				continue
+			as_bytes = protein.encode()
+			#Pyhmmer digitization of sequences for searching.
+			easel_seq = pyhmmer.easel.TextSequence(name = as_bytes, sequence = contents[protein])
+			easel_seq = easel_seq.digitize(self.amino_easel)
+			self.proteins_to_search.append(easel_seq)
+			
+		easel_seq = None
+		
+	def search_protein(self):
+		top_hits = list(pyhmmer.hmmsearch(self.hmm_models, self.proteins_to_search, cpus=1, bit_cutoffs="trusted"))
+		
+		self.printable_lines = []
+		
+		self.hmm_result_proteins = []
+		self.hmm_result_accessions = []
+		self.hmm_result_scores = []
+		
+		for model in top_hits:
+			for hit in model:
+				target_name = hit.name.decode()
+				target_acc = hit.accession
+				if target_acc is None:
+					target_acc = "-"
+				else:
+					target_acc = target_acc.decode()
+				
+				query_name = hit.best_domain.alignment.hmm_name.decode()
+				query_acc = hit.best_domain.alignment.hmm_accession.decode()
+				
+				full_seq_evalue = "%.2g" % hit.evalue
+				full_seq_score = round(hit.score, 1)
+				full_seq_bias = round(hit.bias, 1)
+				
+				best_dom_evalue = "%.2g" % hit.best_domain.alignment.domain.i_evalue
+				best_dom_score = round(hit.best_domain.alignment.domain.score, 1)
+				best_dom_bias = round(hit.best_domain.alignment.domain.bias, 1)
+
+				#I don't know how to get most of these values.
+				exp = 0
+				reg = 0
+				clu = 0
+				ov  = 0
+				env = 0
+				dom = len(hit.domains)
+				rep = 0
+				inc = 0
+				
+				try:
+					description = self.protein_descriptions[target_name]
+				except:
+					description = ""
+				
+				writeout = [target_name, target_acc, query_name, query_acc, full_seq_evalue, \
+				full_seq_score, full_seq_bias, best_dom_evalue, best_dom_score, best_dom_bias, \
+				exp, reg, clu, ov, env, dom, rep, inc, description]
+				
+				#Format and join.
+				writeout = [str(i) for i in writeout]
+				writeout = '\t'.join(writeout)
+				
+				self.printable_lines.append(writeout)
+				
+				self.hmm_result_proteins.append(target_name)
+				self.hmm_result_accessions.append(query_acc)
+				self.hmm_result_scores.append(best_dom_score)
+						
+	def filter_to_best_hits(self, best_hit_per_scp = True, reciprocal_best_hit = True):
+		hmm_file = np.transpose(np.array([self.hmm_result_proteins, self.hmm_result_accessions, self.hmm_result_scores]))
+		
+		#hmm_file = np.loadtxt(hmm_file_name, comments = '#', usecols = (0, 3, 8), dtype=(str))
+		#Sort the hmm file based on the score column in descending order.
+		hmm_file = hmm_file[hmm_file[:,2].astype(float).argsort()[::-1]]
+		
+		if best_hit_per_scp:
+			#Filter the file again for the unique ACCESSION names, since we're only allowed one gene per accession, I guess?
+			#Don't sort the indices, we don't care about the scores anymore.
+			hmm_file = hmm_file[np.sort(np.unique(hmm_file[:,1], return_index = True)[1])]
+			
+		if reciprocal_best_hit:
+			#Identify the first row where each gene name appears, after sorting by score; 
+			#in effect, return the highest scoring assignment per gene name
+			#Sort the indices of the result to match the score-sorted table instead of alphabetical order of gene names
+			hmm_file = hmm_file[np.sort(np.unique(hmm_file[:,0], return_index = True)[1])]
+		
+		#sql_friendly_names = [i.replace(".", "_") for i in hmm_file[:,1]]
+		#self.best_hits = dict(zip(hmm_file[:,0], sql_friendly_names))
+		self.best_hits = dict(zip(hmm_file[:,0], hmm_file[:,1]))
+		
+		hmm_file = None
+
+	def to_hmm_file(self, output):
+		if output is not None:
+			#PyHMMER data is a bit hard to parse. For each result:
+			
+			content = '\n'.join(self.printable_lines) + '\n'
+			
+			if self.do_compress:
+					
+				content = content.encode()
+							
+				fh = gzip.open(output+".gz", "wb")
+				fh.write(content)
+				fh.close()
+				content = None
+				
+			else:
+					
+				fh = open(output, "w")
+				
+				fh.write(content)
+					
+				fh.close()
+				
+			content = None
+	
 def hmm_preproc_initializer(hmm_file, do_compress = False):
 	global hmm_manager
 	hmm_manager = pyhmmer_manager(do_compress)
 	hmm_manager.load_hmm_from_file(hmm_file)
 	
-class pyrodigal_manager:
-	def __init__(self, file = None, aa_out = None, nt_out = None, is_meta = False, full_headers = True, trans_table = 11,
-				num_bp_fmt = True, verbose = True, do_compress = "0", compare_against = None):
-		#Input NT sequences
-		self.file = file
-		
-		#List of seqs read from input file.
-		self.sequences = None
-		#Concatenation of up to first 32 million bp in self.sequences - prodigal caps at this point.
+class new_pyrodigal_manager:
+	def __init__(self, trans_tables = [11, 4], meta = False, verbose = True):
+		self.genome_dict = None
 		self.training_seq = None
 		
-		#Predicted genes go here
-		self.predicted_genes = None
-		#Record the translation table used.
-		self.trans_table = trans_table
+		self.genome_length = 0
 		
-		#This is the pyrodigal manager - this does the gene predicting.
-		self.manager = pd.OrfFinder(meta=is_meta)
-		self.is_meta = is_meta
-		
-		#Full prodigal header information includes more than just a protein number.
-		#If full_headers is true, protein deflines will match prodigal; else, just protein ID.
-		self.full_headers = full_headers
-		
-		#Prodigal prints info to console. I enhanced the info and made printing default, but also allow them to be totally turned off.
+		self.meta = meta
 		self.verbose = verbose
 		
-		#Prodigal formats outputs with 70 bases per line max
-		self.num_bp_fmt = num_bp_fmt
+		self.training_seq = None
+		self.gene_finder = None
 		
-		#File names for outputs
-		self.aa_out = aa_out
-		self.nt_out = nt_out
+		self.coding_bases_by_table = {}
+		self.coding_density_by_table = {}
 		
-		#List of proteins in excess of 100K base pairs (HMMER's limit) and their lengths. This is also fastAAI specific.
-		self.excluded_seqs = {}
+		self.trans_tables = trans_tables
 		
-		#Gzip outputs if asked.
-		self.compress = do_compress
+		self.current_genes = None
+		self.winning_coding_dens = 0
+		self.winning_table = None
 		
-		self.labeled_proteins = None
+		self.genes_nt = None
+		self.genes_aa = None
 		
-		#Normally, we don't need to keep an input sequence after it's had proteins predicted for it - however
-		#For FastAAI and MiGA's purposes, comparisons of two translation tables is necessary.
-		#Rather than re-importing sequences and reconstructing the training sequences, 
-		#keep them for faster repredict with less I/O
-		self.compare_to = compare_against
-		if self.compare_to is not None:
-			self.keep_seqs = True
-			self.keep_after_train = True
-		else:
-			self.keep_seqs = False
-			self.keep_after_train = False
-	
-	#Imports a fasta as binary.
-	def import_sequences(self):
-		if self.sequences is None:
-			self.sequences = {}
-			
-		#check for zipped and import as needed.
-		with open(self.file, 'rb') as test_gz:
-			#Gzip magic number
-			is_gz = (test_gz.read(2) == b'\x1f\x8b')
+		self.protein_seqs = {}
 		
-		if is_gz:
-			fh = gzip.open(self.file)
-		else:
-			fh = open(self.file, "rb")
+	#Reset to initial conditions so that the current use of this object doesn't interfere with the next
+	def reset(self):
+		self.genome_dict = None
+		self.training_seq = None
 		
-		imp = fh.readlines()
+		self.genome_length = 0
 		
-		fh.close()
+		self.training_seq = None
+		self.gene_finder = None
 		
-		cur_seq = None
-		for s in imp:
-			s = s.decode().strip()
-			#> is 62 in ascii. This is asking if the first character is '>'
-			if s.startswith(">"):
-				#Skip first cycle, then do for each after
-				if cur_seq is not None:
-					self.sequences[cur_seq] = ''.join(self.sequences[cur_seq])
-					self.sequences[cur_seq] = self.sequences[cur_seq].encode()
-					#print(cur_seq, len(self.sequences[cur_seq]))
-				cur_seq = s[1:]
-				cur_seq = cur_seq.split()[0]
-				cur_seq = cur_seq.encode('utf-8')
-				self.sequences[cur_seq] = []
-			else:
-				#Remove the newline character.
-				#bases = s[:-1]
-				self.sequences[cur_seq].append(s)
+		self.coding_bases_by_table = {}
+		self.coding_density_by_table = {}
+				
+		self.current_genes = None
+		self.winning_coding_dens = 0
+		self.winning_table = None
 		
-		#Final set
-		self.sequences[cur_seq] = ''.join(self.sequences[cur_seq])
-		self.sequences[cur_seq] = self.sequences[cur_seq].encode()
+		self.genes_nt = None
+		self.genes_aa = None
 		
-		#Now we have the data, go to training.
-		if not self.is_meta:
-			self.train_manager()
+		self.protein_seqs = {}
 		
-	#Collect up to the first 32 million bases for use in training seq.
-	def train_manager(self):
+	def load_genome_from_file(self, genome_file):
+		ff = fasta_file(genome_file)
+		ff.import_fasta()
+		
+		self.prep_genome_dict_for_prediction(ff.sequences)
+		
+	def prep_genome_dict_for_prediction(self, genome_dict):
+		self.reset()
+		
+		self.genome_dict = {}
+		for g in genome_dict:
+			#asbytes = g.encode(encoding = "ascii")
+			self.genome_length += len(genome_dict[g])
+			self.genome_dict[g] = genome_dict[g].encode(encoding = "ascii")
+		
+	def prep_training_seq(self):
 		running_sum = 0
 		seqs_added = 0
 		if self.training_seq is None:
 			self.training_seq = []
-			for seq in self.sequences:
-				running_sum += len(self.sequences[seq])
+			for seq in self.genome_dict:
+				running_sum += len(self.genome_dict[seq])
 				if seqs_added > 0:
 					#Prodigal interleaving logic - add this breaker between sequences, starting at sequence 2
 					self.training_seq.append(b'TTAATTAATTAA')
@@ -564,7 +694,7 @@ class pyrodigal_manager:
 					to_remove = running_sum - 32000000
 					
 					#Remove excess characters
-					cut_seq = self.sequences[seq][:-to_remove]
+					cut_seq = self.genome_dict[seq][:-to_remove]
 					#Add the partial seq
 					self.training_seq.append(cut_seq)
 					
@@ -572,7 +702,7 @@ class pyrodigal_manager:
 					break
 				
 				#add in a full sequence
-				self.training_seq.append(self.sequences[seq])
+				self.training_seq.append(self.genome_dict[seq])
 
 			if seqs_added > 1:
 				self.training_seq.append(b'TTAATTAATTAA')
@@ -582,214 +712,125 @@ class pyrodigal_manager:
 		if len(self.training_seq) < 20000:
 			if self.verbose:
 				print("Can't train on 20 thousand or fewer characters. Switching to meta mode.")
-			self.manager = pd.OrfFinder(meta=True)
-			self.is_meta = True
+			self.manager = pd.GeneFinder(meta=True)
+			self.meta = Trues
 		else:
 			if self.verbose:
-				print("")
 				#G is 71, C is 67; we're counting G + C and dividing by the total.
 				gc = round(((self.training_seq.count(67) + self.training_seq.count(71))/ len(self.training_seq)) * 100, 2)
-				print(len(self.training_seq), "bp seq created,", gc, "pct GC")
+				print(len(self.training_seq), "bp training seq created,", gc, "pct GC")
 				
-			#Train
-			self.manager.train(self.training_seq, translation_table = self.trans_table)
-		
-		if not self.keep_after_train:
-			#Clean up
-			self.training_seq = None
-		
-	def predict_genes(self):
-		if self.is_meta:
-			if self.verbose:
-				print("Finding genes in metagenomic mode")
+	def train(self, table = 11):
+		if not self.meta:
+			self.gene_finder = pd.GeneFinder(meta = False)
+			self.gene_finder.train(self.training_seq, translation_table = table)
 		else:
-			if self.verbose:
-				print("Finding genes with translation table", self.trans_table)
-				print("")
+			self.gene_finder = pd.GeneFinder(meta = True)
 			
-		self.predicted_genes = {}
-		for seq in self.sequences:
+	def predict(self):
+		current_table = self.gene_finder.training_info.translation_table
+		
+		if current_table is None:
+			current_table = "meta"
 			
-			if self.verbose:
-				print("Finding genes in sequence", seq.decode(), "("+str(len(self.sequences[seq]))+ " bp)... ", end = '')
-				
-			self.predicted_genes[seq] = self.manager.find_genes(self.sequences[seq])
-				
-			#If we're comparing multiple tables, then we want to keep these for re-prediction.
-			if not self.keep_seqs:
-				#Clean up
-				self.sequences[seq] = None
-			
-			if self.verbose:
-				print("done!")
-			
-	#Predict genes with an alternative table, compare results, and keep the winner.	
-	def compare_alternative_table(self, table):
-		if table == self.trans_table:
-			print("You're trying to compare table", table, "with itself.")
+		self.coding_bases_by_table[current_table] = 0
+		
+		next_gene_set = {}
+		
+		if self.gene_finder is not None:
+			for seq in self.genome_dict:
+				genes = self.gene_finder.find_genes(self.genome_dict[seq])
+				next_gene_set[seq] = genes
+				for g in genes:	
+					self.coding_bases_by_table[current_table] += len(g.sequence())
+		
+		self.coding_density_by_table[current_table] = self.coding_bases_by_table[current_table] / self.genome_length
+		
+		if self.current_genes is None:
+			self.current_genes = next_gene_set
+			self.winning_coding_dens = self.coding_density_by_table[current_table]
+			self.winning_table = current_table
 		else:
-			if self.verbose:
-				print("Comparing translation table", self.trans_table, "against table", table)
-			old_table = self.trans_table
-			old_genes = self.predicted_genes
-			old_size = 0
-			for seq in self.predicted_genes:
-				for gene in self.predicted_genes[seq]:
-					old_size += (gene.end - gene.begin)
-			
-			self.trans_table = table
-			self.train_manager()
-			self.predict_genes()
-				
-			new_size = 0
-			for seq in self.predicted_genes:
-				for gene in self.predicted_genes[seq]:
-					new_size += (gene.end - gene.begin)
-			
-			if (old_size / new_size) > 1.1:
+			if self.coding_density_by_table[current_table] > (self.winning_coding_dens * 1.1):
 				if self.verbose:
-					print("Translation table", self.trans_table, "performed better than table", old_table, "and will be used instead.")
+					print("Translation table", self.winning_table, "had coding density of", self.winning_coding_dens)
+					print("New translation table", current_table, "more than 10% better, coding density of", self.coding_density_by_table[current_table])
+					print("New table's predicted genes will be used")
+				self.current_genes = next_gene_set
+				self.winning_coding_dens = self.coding_density_by_table[current_table]
+				self.winning_table = current_table
+				
+	#def genes_to_mem(self, current_genes):
+	def genes_to_mem(self):
+		self.protein_seqs = {}
+		for seq in self.current_genes:
+		#for seq in current_genes:
+			self.protein_seqs[seq] = {}
+			seqid = 1
+			for g in self.current_genes[seq]:
+			#for g in current_genes[seq]:
+				gene_name = seq + "_" + str(seqid)
+				seqid += 1
+				self.protein_seqs[seq][seqid] = g.translate(None)
+			
+	def write_nt(self, compress = False, outfile = None):
+		if outfile is not None:
+			self.genes_nt = io.StringIO("")
+			sz = 0
+			for seq in self.current_genes:
+				sz += len(self.current_genes[seq])
+				self.current_genes[seq].write_genes(self.genes_nt, seq)
+				
+			self.genes_nt = self.genes_nt.getvalue()
+			
+			if compress:
+				self.genes_nt = self.genes_nt.encode(encoding = "ascii")
+				self.genes_nt = gzip.compress(self.genes_nt)
+				with open(outfile+".gz", 'wb') as out:
+					out.write(self.genes_nt)
 			else:
-				if self.verbose:
-					print("Translation table", self.trans_table, "did not perform significantly better than table", old_table, "and will not be used.")
-				self.trans_table = old_table
-				self.predicted_genes = old_genes
+				with open(outfile, "w") as out:
+					out.write(self.genes_nt)
+						
+			#This never needs returned in fastaai
+			self.genes_nt = None
 			
-			#cleanup
-			old_table = None
-			old_genes = None
-			old_size = None
-			new_size = None
-		
-	def predict_and_compare(self):
-		self.predict_genes()
-	
-		#Run alt comparisons in gene predict.
-		if self.compare_to is not None:
-			while len(self.compare_to) > 0:
-				try:
-					next_table = int(self.compare_to.pop(0))
-					
-					if len(self.compare_to) == 0:
-						#Ready to clean up.
-						self.keep_after_train = True
-						self.keep_seqs = True
-					
-					self.compare_alternative_table(next_table)
-				except:
-					print("Alternative table comparison failed! Skipping.")
-		
-	#Break lines into size base pairs per line. Prodigal's default for bp is 70, aa is 60.
-	def num_bp_line_format(self, string, size = 70):
-		#ceiling funciton without the math module
-		ceiling = int(round((len(string)/size)+0.5, 0))
-		formatted = '\n'.join([string[(i*size):(i+1)*size] for i in range(0, ceiling)])
-		return formatted
-	
-	#Writeouts
-	def write_nt(self):
-		if self.nt_out is not None:
-			if self.verbose:
-				print("Writing nucleotide sequences... ")
-			if self.compress == '1' or self.compress == '2':
-				out_writer = gzip.open(self.nt_out+".gz", "wb")
-				
-				content = b''
-				
-				for seq in self.predicted_genes:
-					seqname = b">"+ seq + b"_"
-					#Gene counter
-					count = 1
-					for gene in self.predicted_genes[seq]:
-						#Full header lines
-						if self.full_headers:
-							content += b' # '.join([seqname + str(count).encode(), str(gene.begin).encode(), str(gene.end).encode(), str(gene.strand).encode(), gene._gene_data.encode()])
-						else:
-							#Reduced headers if we don't care.
-							content += seqname + str(count).encode()
-							
-						content += b'\n'
-							
-						if self.num_bp_fmt:
-							#60 bp cap per line
-							content += self.num_bp_line_format(gene.sequence(), size = 70).encode()
-						else:
-							#One-line sequence.
-							content += gene.sequence().encode()
-							
-						content += b'\n'
-						count += 1
-				
-				out_writer.write(content)
-				out_writer.close()
+	def write_aa(self, compress = False, outfile = None):
+		if outfile is not None:
+			self.genes_aa = io.StringIO("")
 			
-			if self.compress == '0' or self.compress == '2':
-				out_writer = open(self.nt_out, "w")
-			
-				for seq in self.predicted_genes:
-					#Only do this decode once.
-					seqname = ">"+ seq.decode() +"_"
-					#Gene counter
-					count = 1
-					
-					for gene in self.predicted_genes[seq]:
-						#Full header lines
-						if self.full_headers:
-							#Standard prodigal header
-							print(seqname + str(count), gene.begin, gene.end, gene.strand, gene._gene_data, sep = " # ", file = out_writer)
-						else:
-							#Reduced headers if we don't care.
-							print(seqname + str(count), file = out_writer)
-							
-						if self.num_bp_fmt:
-							#60 bp cap per line
-							print(self.num_bp_line_format(gene.sequence(), size = 70), file = out_writer)
-						else:
-							#One-line sequence.
-							print(gene.sequence(), file = out_writer)
-							
-						count += 1
-							
-				out_writer.close()
+			for seq in self.current_genes:
+				self.current_genes[seq].write_translations(self.genes_aa, seq)
+				self.protein_seqs[seq] = {}
+				
+			self.genes_aa = self.genes_aa.getvalue()
 		
-	def write_aa(self):
-		if self.aa_out is not None:
-			if self.verbose:
-				print("Writing amino acid sequences...")
-				
-			self.labeled_proteins = {}
-			content = ''
-			for seq in self.predicted_genes:
-				count = 1
-				seqname = ">"+ seq.decode() + "_"
-				for gene in self.predicted_genes[seq]:
-					prot_name = seqname + str(count)
-					translation = gene.translate()
-					self.labeled_proteins[prot_name[1:]] = translation
-					defline = " # ".join([prot_name, str(gene.begin), str(gene.end), str(gene.strand), str(gene._gene_data)])
-					content += defline
-					content += "\n"
-					count += 1
-					content += self.num_bp_line_format(translation, size = 60)
-					content += "\n"					
-				
-			if self.compress == '0' or self.compress == '2':
-				out_writer = open(self.aa_out, "w")
-				out_writer.write(content)
-				out_writer.close()
-				
-			if self.compress == '1' or self.compress == '2':
-				content = content.encode()
-				out_writer = gzip.open(self.aa_out+".gz", "wb")
-				out_writer.write(content)
-				out_writer.close()
-				
-	def run_for_fastaai(self):
-		self.verbose = False
-		self.import_sequences()
-		self.train_manager()
-		self.predict_and_compare()
-		self.write_aa()
+			if compress:
+				self.genes_aa = self.genes_aa.encode(encoding = "ascii")
+				with gzip.open(outfile+".gz", 'wb') as out:
+					out.write(self.genes_aa)
+			else:
+				with open(outfile, "w") as out:
+					out.write(self.genes_aa)
+					
+			self.genes_aa = None
+
+	def run_for_fastaai(self, genome_file, compress = False, outnt = None, outaa = None):
+		self.load_genome_from_file(genome_file)
+		self.prep_training_seq()
+		for table in self.trans_tables:
+			self.train(table = table)
+			self.predict()
+			#print(len(mn.current_genes))
+			
+		self.genes_to_mem()
+		
+		self.write_nt(compress = compress, outfile = outnt)
+		self.write_aa(compress = compress, outfile = outaa)
+		
+		#return self.protein_seqs
+		
+
 	
 #Iterator for agnostic reader
 class agnostic_reader_iterator:
@@ -839,8 +880,7 @@ Takes a file or files and processes them from genome -> protein, protein -> hmm,
 '''
 
 class input_file:
-	def __init__(self, input_path, output = "", verbosity = False, do_compress = False, 
-	make_crystal = False):
+	def __init__(self, input_path, output = "", verbosity = False, do_compress = False, make_crystal = False, write_outputs = True):
 		#starting path for the file; irrelevant for protein and hmm, but otherwise useful for keeping track.
 		self.path = input_path
 		#Output directory starts with this
@@ -874,6 +914,7 @@ class input_file:
 		
 		self.ran_hmmer = False
 		
+		self.pyrodigal_manager = None
 		#If pyrodigal is run, then the protein sequences are already loaded into memory. 
 		#We reuse them in kmer extraction instead of another I/O
 		self.prepared_proteins = None
@@ -901,13 +942,16 @@ class input_file:
 		
 		self.do_compress = do_compress
 	
+		self.crystal_record = None
 		self.crystal = None
 		
 		self.init_time = None
-		#default to 0 time.
+		#default to 0 time
 		self.prot_pred_time = None
 		self.hmm_search_time = None
 		self.besthits_time = None
+		
+		self.write_outputs = write_outputs
 	
 	def curtime(self):
 		time_format = "%d/%m/%Y %H:%M:%S"
@@ -951,25 +995,35 @@ class input_file:
 	def genome_to_protein(self):
 		if self.genome is None:
 			print(self.name, "wasn't a declared as a genome! I can't make this into a protein!")
-		else:		
-			protein_output = os.path.normpath(self.output + "/predicted_proteins/" + self.basename + '.faa')
+		else:
+			if self.write_outputs:
+				protein_output = os.path.normpath(self.output + "/predicted_proteins/" + self.basename + '.faa')
+			else:
+				protein_output = None
 					
 			if self.do_compress:
 				compress_level = "1"
 			else:
 				compress_level = "0"
 			
-			mn = pyrodigal_manager(file = self.genome, aa_out = protein_output, compare_against = [4], do_compress = compress_level)
-			mn.run_for_fastaai()
+			#
+			self.pyrodigal_manager = new_pyrodigal_manager(trans_tables = [11, 4], meta = False, verbose = False)
+			#self, genome_file, compress = False, outnt = None, outaa = None
+			self.pyrodigal_manager.run_for_fastaai(genome_file = self.genome, outaa = protein_output, compress = self.do_compress)
 			
-			self.trans_table = str(mn.trans_table)
+			self.trans_table = str(self.pyrodigal_manager.winning_table)
 			
-			for prot in mn.excluded_seqs:
-				self.err_log += "Protein " + prot + " was observed to have >100K amino acids ( " + str(mn.excluded_seqs[prot]) + " AA found ). It will not be included in predicted proteins for this genome;"
-			
-			self.prepared_proteins = mn.labeled_proteins
-			
-			del mn
+			self.prepared_proteins = {}
+			excluded_seqs = {}
+			for seq in self.pyrodigal_manager.protein_seqs:
+				for seqid in self.pyrodigal_manager.protein_seqs[seq]:
+					prot_name = seq+"_"+str(seqid)
+					prot_length = len(self.pyrodigal_manager.protein_seqs[seq][seqid])
+					if prot_length > 99999:
+						self.err_log += "Protein " + prot_name + " was observed to have >100K amino acids ( " + str(prot_length) + " AA found ). It will not be included in predicted proteins for this genome;"
+					else:
+						self.prepared_proteins[prot_name] = self.pyrodigal_manager.protein_seqs[seq][seqid]
+
 			
 			#If there are zipped files leftover and we didn't want them, clean them up.
 			if self.do_compress:
@@ -992,8 +1046,11 @@ class input_file:
 		else:
 
 			folder = os.path.normpath(self.output + "/hmms")
-						
-			hmm_output = os.path.normpath(folder +"/"+ self.basename + '.hmm')
+			
+			if self.write_outputs:
+				hmm_output = os.path.normpath(folder +"/"+ self.basename + '.hmm')
+			else:
+				hmm_output = None
 			
 			if self.prepared_proteins is None:
 				self.prepared_proteins, deflines = read_fasta(self.protein)
@@ -1098,7 +1155,7 @@ class input_file:
 		self.best_hits_kmers = {}
 		
 		if self.crystalize:
-			crystal_record = []
+			self.crystal_record = []
 			
 		#Kmerize proteins and record metadata
 		for protein in self.prepared_proteins:
@@ -1106,7 +1163,7 @@ class input_file:
 				accession = self.best_hits[protein]
 				
 				if self.crystalize:
-					crystal_record.append(str(protein)+"\t"+str(accession)+"\t"+str(self.prepared_proteins[protein])+"\n")
+					self.crystal_record.append(str(protein)+"\t"+str(accession)+"\t"+str(self.prepared_proteins[protein])+"\n")
 				
 				kmer_set = self.unique_kmer_simple_key(self.prepared_proteins[protein])
 				self.protein_kmer_count[accession] = kmer_set.shape[0]
@@ -1119,19 +1176,21 @@ class input_file:
 			
 		if self.crystalize:
 			#only make a crystal if it actually has content.
-			if len(crystal_record) > 0:
+			if len(self.crystal_record) > 0:
 				crystal_path = os.path.normpath(self.output + "/crystals/" + self.basename + '_faai_crystal.txt')
-				crystal_record = "".join(crystal_record)
+				self.crystal_record = "".join(self.crystal_record)
 				
 				if self.do_compress:
-					crystal_record = crystal_record.encode()
-					crystal_writer = gzip.open(crystal_path+".gz", "wb")
-					crystal_writer.write(crystal_record)
-					crystal_writer.close()
+					self.crystal_record = self.crystal_record.encode()
+					if self.write_outputs:
+						crystal_writer = gzip.open(crystal_path+".gz", "wb")
+						crystal_writer.write(self.crystal_record)
+						crystal_writer.close()
 				else:
-					crystal_writer = open(crystal_path, "w")
-					crystal_writer.write(crystal_record)
-					crystal_writer.close()
+					if self.write_outputs:
+						crystal_writer = open(crystal_path, "w")
+						crystal_writer.write(self.crystal_record)
+						crystal_writer.close()
 			
 		#Final free.
 		self.prepared_proteins = None
@@ -1196,6 +1255,26 @@ class input_file:
 			self.trans_table = "unknown"
 		
 		self.partial_timings()
+		
+	def add_triplet(self, genome_path = None, protein_path = None, hmm_path = None):
+		if genome_path is not None:
+			if os.path.exists(genome_path):
+				self.set_genome(genome_path)
+			else:
+				print("Genome file", genome_path, "not found!")
+				
+		if protein_path is not None:
+			if os.path.exists(protein_path):
+				self.set_protein(protein_path)
+			else:
+				print("Protein file", protein_path, "not found!")
+				
+		if hmm_path is not None:
+			if os.path.exists(hmm_path):
+				self.set_hmm(hmm_path)
+			else:
+				print("HMM file", hmm_path, "not found!")
+		
 
 '''
 Utility functions
@@ -3255,7 +3334,7 @@ class db_db_remake:
 				if self.store_mat:
 					#Add the decimals - we don't need to do this is we've been writing line-wise.
 					#values will ALWAYS be 4 digits in this method, so groups of 2 dec. works.
-					cur[i] = re.sub("(\d{2})(\d{2})", "\\1.\\2", cur[i])
+					cur[i] = re.sub(r"(\d{2})(\d{2})", "\\1.\\2", cur[i])
 				#Add in the query name to the row
 				cur[i] = self.query_names[row]+"\t"+cur[i]
 				row += 1
