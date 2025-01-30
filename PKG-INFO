@@ -1,0 +1,21 @@
+Metadata-Version: 2.1
+Name: FastAAI
+Version: 0.1.20
+Summary: A rapid estimator for amino acid identity between genomes.
+Author: Kenji Gerhardt
+Author-email: kenji.gerhardt@gmail.com
+Requires-Python: >=3
+Description-Content-Type: text/markdown
+License-File: LICENSE
+
+# FastAAI
+
+Author: Kenji Gerhardt
+Email:  Kenji.Gerhardt@gmail.com
+Author: Carlos Ruiz Perez
+Email:  carlos.vernichtung@gmail.com
+
+FastAAI uses tetramer frequency over shared universal sincle copy proteins to rapidly and accurately estimate average whole-genome amino acid identity.
+
+
+
