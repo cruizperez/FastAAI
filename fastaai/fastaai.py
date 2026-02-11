@@ -37,6 +37,18 @@ from math import ceil
 import re
 
 
+def _decode_if_bytes(value):
+	"""Safely decode bytes to str; return str values unchanged.
+
+	Newer versions of pyhmmer return str instead of bytes for hit
+	attributes like name and accession.  This helper avoids
+	AttributeError: 'str' object has no attribute 'decode'.
+	"""
+	if isinstance(value, bytes):
+		return value.decode()
+	return value
+
+
 class progress_tracker:
 	def __init__(self, total, step_size = 2, message = None, one_line = True):
 		self.current_count = 0
@@ -298,15 +310,15 @@ class pyhmmer_manager:
 		
 		for model in top_hits:
 			for hit in model:
-				target_name = hit.name.decode()
+				target_name = _decode_if_bytes(hit.name)
 				target_acc = hit.accession
 				if target_acc is None:
 					target_acc = "-"
 				else:
-					target_acc = target_acc.decode()
+					target_acc = _decode_if_bytes(target_acc)
 				
-				query_name = hit.best_domain.alignment.hmm_name.decode()
-				query_acc = hit.best_domain.alignment.hmm_accession.decode()
+				query_name = _decode_if_bytes(hit.best_domain.alignment.hmm_name)
+				query_acc = _decode_if_bytes(hit.best_domain.alignment.hmm_accession)
 				
 				full_seq_evalue = "%.2g" % hit.evalue
 				full_seq_score = round(hit.score, 1)
@@ -433,10 +445,10 @@ class pyhmmer_manager:
 			try:
 				self.to_hmm_file(hmm_output)
 			except:
-				print(output, "cannot be created. HMM search failed. This file will be skipped.")
+				print(hmm_output, "cannot be created. HMM search failed. This file will be skipped.")
 
 		except:
-			print(output, "failed to run through HMMER!")
+			print(hmm_output, "failed to run through HMMER!")
 			self.best_hits = None
 
 class new_pyhmmer_manager:
@@ -507,15 +519,15 @@ class new_pyhmmer_manager:
 		
 		for model in top_hits:
 			for hit in model:
-				target_name = hit.name.decode()
+				target_name = _decode_if_bytes(hit.name)
 				target_acc = hit.accession
 				if target_acc is None:
 					target_acc = "-"
 				else:
-					target_acc = target_acc.decode()
+					target_acc = _decode_if_bytes(target_acc)
 				
-				query_name = hit.best_domain.alignment.hmm_name.decode()
-				query_acc = hit.best_domain.alignment.hmm_accession.decode()
+				query_name = _decode_if_bytes(hit.best_domain.alignment.hmm_name)
+				query_acc = _decode_if_bytes(hit.best_domain.alignment.hmm_accession)
 				
 				full_seq_evalue = "%.2g" % hit.evalue
 				full_seq_score = round(hit.score, 1)
