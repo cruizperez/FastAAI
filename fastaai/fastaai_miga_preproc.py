@@ -423,15 +423,15 @@ class pyhmmer_manager:
 		
 		for model in top_hits:
 			for hit in model:
-				target_name = hit.name.decode()
+				target_name = hit.name.decode() if isinstance(hit.name, bytes) else hit.name
 				target_acc = hit.accession
 				if target_acc is None:
 					target_acc = "-"
 				else:
-					target_acc = target_acc.decode()
+					target_acc = target_acc.decode() if isinstance(target_acc, bytes) else target_acc
 				
-				query_name = hit.best_domain.alignment.hmm_name.decode()
-				query_acc = hit.best_domain.alignment.hmm_accession.decode()
+				query_name = hit.best_domain.alignment.hmm_name; query_name = query_name.decode() if isinstance(query_name, bytes) else query_name
+				query_acc = hit.best_domain.alignment.hmm_accession; query_acc = query_acc.decode() if isinstance(query_acc, bytes) else query_acc
 				
 				full_seq_evalue = "%.2g" % hit.evalue
 				full_seq_score = round(hit.score, 1)
